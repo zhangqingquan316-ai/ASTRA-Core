@@ -1,0 +1,7 @@
+torch>=2.1
+transformers>=4.40
+datasets>=2.18
+accelerate>=0.27
+tensorly>=0.8
+numpy>=1.24
+matplotlib>=3.7

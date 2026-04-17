@@ -1,0 +1,26 @@
+[
+  {
+    "name": "sst2_additive_baseline",
+    "target_families": ["q", "k", "v", "o"],
+    "attn_ranks": [4, 4, 16, 32],
+    "ffn_ranks": [2, 4, 64, 64],
+    "attn_alpha": 1.0,
+    "ffn_alpha": 1.0,
+    "tuning_mode": "additive",
+    "multiplicative_num_bases": 50,
+    "learning_rate": 0.001,
+    "num_train_epochs": 3
+  },
+  {
+    "name": "sst2_both_mb50",
+    "target_families": ["q", "k", "v", "o"],
+    "attn_ranks": [4, 4, 16, 32],
+    "ffn_ranks": [2, 4, 64, 64],
+    "attn_alpha": 1.0,
+    "ffn_alpha": 1.0,
+    "tuning_mode": "both",
+    "multiplicative_num_bases": 50,
+    "learning_rate": 0.001,
+    "num_train_epochs": 3
+  }
+]
