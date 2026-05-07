@@ -1,71 +1,62 @@
-# ASTRA-Core
+# ASTRA-Core: Spectral Tensor Reparameterization for Efficient Adaptation
 
-Reference SFT code for the ASTRA blueprint's encoder-side Tucker family. In blueprint terms:
+Hi!
 
-- `--tuning-mode additive` corresponds to `ASTRA-Core`
-- `--tuning-mode multiplicative` corresponds to `ASTRA-Mode`
-- `--tuning-mode both` corresponds to `ASTRA-Hybrid`
+This repository is the public research-code repository for **ASTRA-Core**, the first implemented stage of our broader **ASTRA** project, developed around the blueprint **"Parameters are Tensor Fields: Multilinear Geometry for Efficient LLM Adaptation and Post-Training."**
 
-The current repository is a local-only research implementation for GLUE-style sequence classification. It is not yet the full ASTRA stack described in the blueprint. DPO, PPO, GRPO, ASTRA-G, and ASTRA-Muon are not implemented here.
+**ASTRA** stands for **A**daptive **S**pectral **T**ensor **R**eparameterized **A**lignment. The central idea is to stop treating Transformer parameters as isolated matrices and instead organize compatible weights into **family-wise tensor fields**, where structure across layers, projection types, and hidden dimensions can be modeled explicitly.
 
-Authors: Jiang Yurui, Zhang Qingquan
+The current release focuses on the encoder-side supervised fine-tuning setting: family-wise Tucker/HOSVD decompositions, additive core updates, multiplicative mode transforms, and their hybrid combination for local GLUE classification tasks.
+
+Authors: Zhang Qingquan, Jiang Yurui
+
+-----
 
 ## 中文说明
 
-这是一个预先公开的最小研究代码仓库版本。当前公开范围严格限定为：
+这是 ASTRA 项目的第一阶段公开代码仓库，当前只公开已经实现并且边界清晰的部分：
 
-- encoder-style GLUE classification 的 ASTRA-Core / ASTRA-Mode / ASTRA-Hybrid SFT 实现
+- encoder-style GLUE classification 的 SFT 代码
+- `ASTRA-Core`、`ASTRA-Mode`、`ASTRA-Hybrid` 三种参数化方式
 - 不包含 DPO、PPO、GRPO、ASTRA-G、ASTRA-Muon
-- 不包含模型权重、数据集、训练产物
+- 不包含模型权重、数据集和训练产物
 
 中文代码导读见 [docs/CODE_MAP_zh.md](./docs/CODE_MAP_zh.md)。
 
-## What This Repository Does
+-----
 
-The main workflow:
+## What is ASTRA-Core?
 
-- loads a local Hugging Face sequence-classification model,
-- loads a locally saved GLUE dataset created with `datasets.save_to_disk()`,
-- builds Tucker/HOOI decomposition caches for selected attention or FFN families,
-- trains additive, multiplicative, or combined Tucker adapter parameters,
-- saves trainable weights, metrics, histories, and parameter-count summaries.
+Parameter-efficient fine-tuning methods such as LoRA usually adapt each projection matrix independently. That is effective, but it ignores the possibility that updates across layers and module families may share a higher-order multilinear structure.
 
-The current code path is scoped to encoder-style classification models that expose `encoder.layer`, such as RoBERTa-like architectures.
+**ASTRA-Core** starts from the observation that pretrained Transformer weights can be grouped into semantically meaningful **families** and stacked into high-order tensors. For example, compatible attention or FFN matrices can be organized along modes such as layer, module type, output dimension, and input dimension. A Tucker/HOSVD decomposition then provides a spectral multilinear subspace induced by the pretrained model.
 
-## Repository Layout
+Within that view, the current repository implements three related adaptation variants:
 
-```text
-.
-|-- README.md
-|-- LICENSE
-|-- pyproject.toml
-|-- requirements.txt
-|-- train_astra_core.py
-|-- docs/
-|   `-- CODE_MAP_zh.md
-|-- examples/
-|   |-- run_sst2.sh
-|   `-- sweep_sst2.json
-|-- scripts/
-|   `-- prepare_glue_dataset.py
-|-- tests/
-|   `-- test_public_helpers.py
-`-- astra_core/
-    |-- __init__.py
-    |-- __main__.py
-    |-- artifacts.py
-    |-- cli.py
-    |-- constants.py
-    |-- experiment.py
-    |-- modeling.py
-    |-- sweep.py
-    |-- tasks.py
-    `-- training_state.py
-```
+- **ASTRA-Core**: train only an additive Tucker-core update while keeping the mode factors fixed
+- **ASTRA-Mode**: train multiplicative mode transforms over the shared Tucker core
+- **ASTRA-Hybrid**: combine additive core updates with multiplicative mode transforms
 
-## Installation
+This is intentionally narrower than the full ASTRA blueprint. The broader project also studies gradients, Hessians, optimizer-space projections, and post-training updates, but those components are not part of this repository yet.
 
-Python `3.10+` is recommended.
+-----
+
+## Key Features
+
+* **Family-Wise Tensorization**: Groups compatible attention or FFN weights into shared tensor families instead of treating every layer independently.
+* **Spectral Reparameterization**: Builds Tucker/HOSVD decompositions from pretrained weights and performs adaptation inside the induced multilinear subspace.
+* **Multiple Adaptation Variants**: Supports additive (`ASTRA-Core`), multiplicative (`ASTRA-Mode`), and hybrid (`ASTRA-Hybrid`) training modes in one codebase.
+* **Local-First Research Workflow**: Uses local Hugging Face model folders and locally saved GLUE datasets, which keeps experiments reproducible and easy to audit.
+* **Explicit Scope Boundaries**: Publishes the implemented encoder-side SFT part of ASTRA without over-claiming unsupported DPO, PPO, GRPO, or optimizer-level extensions.
+* **Experiment Bookkeeping**: Saves trainable states, parameter-count summaries, histories, sweep outputs, and decomposition caches for later analysis.
+
+-----
+
+## Getting Started
+
+### Installation
+
+Clone the repository and install it as a package:
 
 ```bash
 git clone https://github.com/<your-name>/ASTRA-Core.git
@@ -82,17 +73,17 @@ If you prefer not to install the package in editable mode:
 pip install -r requirements.txt
 ```
 
-## Prepare Local Inputs
+### Prepare Local Inputs
 
-### 1. Local model folder
+The current repository expects two local inputs:
 
-`--model-path` must point to a local Hugging Face model directory.
+1. **A local Hugging Face model folder**
 
-### 2. Local GLUE dataset folder
+   `--model-path` must point to a local sequence-classification model directory.
 
-The training code expects a dataset previously saved with `datasets.save_to_disk()`.
+2. **A local GLUE dataset saved with `datasets.save_to_disk()`**
 
-You can prepare it with:
+   You can prepare it with:
 
 ```bash
 python scripts/prepare_glue_dataset.py \
@@ -100,7 +91,7 @@ python scripts/prepare_glue_dataset.py \
   --output-dir ./local_datasets/glue_sst2
 ```
 
-Supported GLUE tasks:
+Supported GLUE tasks in this repository:
 
 - `sst2`
 - `mrpc`
@@ -109,29 +100,23 @@ Supported GLUE tasks:
 - `rte`
 - `stsb`
 
-## Quick Start
+### Usage
 
-You can run the project in three equivalent ways.
-
-### Option 1. Run the package module
+You can run the project in three equivalent ways:
 
 ```bash
 python -m astra_core --help
 ```
 
-### Option 2. Run the console script after `pip install -e .`
-
 ```bash
 astra-core --help
 ```
-
-### Option 3. Run the repository wrapper script
 
 ```bash
 python train_astra_core.py --help
 ```
 
-## Single-Run Example
+To run a single experiment, for example:
 
 ```bash
 python train_astra_core.py \
@@ -170,27 +155,7 @@ CUDA_VISIBLE_DEVICES=0 python -m astra_core \
   --run-name astra_hybrid_sst2
 ```
 
-To run in the background:
-
-```bash
-nohup CUDA_VISIBLE_DEVICES=0 python train_astra_core.py \
-  --model-path /data/models/roberta-large \
-  --dataset-path /data/datasets/glue_sst2 \
-  --glue-task sst2 \
-  --target-families q k v o \
-  --attn-ranks 4 4 16 32 \
-  --ffn-ranks 2 4 64 64 \
-  --tuning-mode both \
-  --multiplicative-num-bases 50 \
-  --learning-rate 1e-3 \
-  --num-train-epochs 3 \
-  --run-name astra_hybrid_sst2 \
-  > astra_hybrid_sst2.log 2>&1 &
-```
-
-## Sweep Example
-
-An example sweep spec is provided in [examples/sweep_sst2.json](./examples/sweep_sst2.json).
+To run a sweep:
 
 ```bash
 python train_astra_core.py \
@@ -201,34 +166,32 @@ python train_astra_core.py \
   --sweep-output-dir ./runs/sst2_sweep
 ```
 
-## Saved Outputs
+For more details on code organization and hyperparameters, please refer to the source code and the Chinese walkthrough in [docs/CODE_MAP_zh.md](./docs/CODE_MAP_zh.md).
 
-For a single unnamed run, the code writes:
+-----
 
-- `./astra_core_<task>_results/`
-- `./astra_core_<task>_final/`
+## Current Experimental Scope
 
-For named runs and sweeps, it writes:
+The broader ASTRA blueprint is motivated by four research hypotheses:
 
-- `./astra_core_runs/<task>/<run_name>/results/`
-- `./astra_core_runs/<task>/<run_name>/final/`
-- `./astra_core_sweeps/<task>_<timestamp>/`
+- pretrained parameter families exhibit multilinear low-dimensional structure
+- fine-tuning updates align with pretrained multilinear subspaces
+- effective gradient and curvature directions can be projected into family-wise tensor subspaces
+- similar geometry may extend from SFT to post-training regimes such as DPO, PPO, and GRPO
 
-Important saved artifacts include:
+This public repository, however, intentionally publishes only the part that is currently implemented and reproducible:
 
-- `trainable_state.pt`
-- `training_config.json`
-- `parameter_counts.json`
-- `experiment_config.json`
-- `experiment_summary.json`
-- `train_loss_history.csv`
-- `eval_history.csv`
+- encoder-side GLUE classification experiments
+- family-wise Tucker/HOSVD decompositions over attention and FFN families
+- additive, multiplicative, and hybrid ASTRA adaptation variants
+- parameter counting, decomposition caching, history logging, and sweep summaries
 
-`parameter_counts.json` stores:
+The following components belong to the broader ASTRA roadmap and are **not** included here:
 
-- `adapter_params`
-- `classifier_trainable_params`
-- `other_trainable_params`
-- `total_trainable_params`
-- `all_params`
-- `trainable_ratio`
+- decoder-only instruction tuning
+- DPO, PPO, and GRPO post-training
+- ASTRA-G optimizer-level gradient projection
+- ASTRA-Muon momentum orthogonalization
+- the larger gradient/Hessian analysis toolkit described in the blueprint
+
+This release should therefore be read as the **ASTRA-Core research-code baseline**, not as the complete ASTRA system.
