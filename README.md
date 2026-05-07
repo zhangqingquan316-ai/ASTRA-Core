@@ -8,7 +8,7 @@ Reference SFT code for the ASTRA blueprint's encoder-side Tucker family. In blue
 
 The current repository is a local-only research implementation for GLUE-style sequence classification. It is not yet the full ASTRA stack described in the blueprint. DPO, PPO, GRPO, ASTRA-G, and ASTRA-Muon are not implemented here.
 
-Authors: Zhang Qingquan, Jiang Yurui
+Authors: Jiang Yurui, Zhang Qingquan
 
 ## 中文说明
 
