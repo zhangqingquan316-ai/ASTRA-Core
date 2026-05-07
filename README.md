@@ -10,6 +10,8 @@ The current release focuses on the encoder-side supervised fine-tuning setting: 
 
 Authors: Zhang Qingquan, Jiang Yurui
 
+License: **BSD 3-Clause**. See [LICENSE](./LICENSE).
+
 -----
 
 ## 中文说明
@@ -59,7 +61,7 @@ This is intentionally narrower than the full ASTRA blueprint. The broader projec
 Clone the repository and install it as a package:
 
 ```bash
-git clone https://github.com/<your-name>/ASTRA-Core.git
+git clone https://github.com/zhangqingquan316-ai/ASTRA-Core.git
 cd ASTRA-Core
 python -m venv .venv
 source .venv/bin/activate

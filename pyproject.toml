@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Reference SFT code for ASTRA-Core and its mode/hybrid variants on local GLUE classification tasks."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "BSD-3-Clause" }
 authors = [
   { name = "张清泉" },
   { name = "江宇睿" },
@@ -24,7 +24,7 @@ dependencies = [
 ]
 keywords = ["astra", "tucker", "peft", "transformers", "glue", "research"]
 classifiers = [
-  "License :: OSI Approved :: MIT License",
+  "License :: OSI Approved :: BSD License",
   "Programming Language :: Python :: 3",
   "Programming Language :: Python :: 3.10",
   "Programming Language :: Python :: 3.11",
