@@ -1,4 +1,4 @@
-"""High-level experiment workflow for Tucker-LoRA PM training."""
+"""High-level experiment workflow for ASTRA-Core training."""
 
 import gc
 from datetime import datetime
@@ -54,11 +54,11 @@ def prepare_experiment_dirs(args, sweep_root=None):
         return experiment_root, results_dir, final_dir
 
     if getattr(args, "single_output_mode", True):
-        results_dir = Path(f"./tucker_lora_{args.glue_task}_results")
-        final_dir = Path(f"./tucker_lora_{args.glue_task}_final")
+        results_dir = Path(f"./astra_core_{args.glue_task}_results")
+        final_dir = Path(f"./astra_core_{args.glue_task}_final")
         experiment_root = final_dir
     else:
-        experiment_root = Path("./tucker_lora_runs") / args.glue_task / args.run_name
+        experiment_root = Path("./astra_core_runs") / args.glue_task / args.run_name
         results_dir = experiment_root / "results"
         final_dir = experiment_root / "final"
 
@@ -172,9 +172,9 @@ def compute_parameter_statistics(model):
     """Compute the parameter-count summary used for logging and result files.
 
     `adapter_params` is intended to answer the paper-facing question
-    "how many trainable parameters are introduced by the Tucker adapter itself?".
+    "how many trainable parameters are introduced by the ASTRA adapter itself?".
     It therefore counts only trainable parameters that live inside
-    `tucker_shared_state_*` modules, and excludes:
+    `astra_core_shared_state_*` modules, and excludes:
     - the classifier head (`classifier.*` / `score.*`)
     - frozen Tucker factors / cached decomposition tensors stored as buffers
     """
@@ -182,7 +182,7 @@ def compute_parameter_statistics(model):
     adapter_params = sum(
         param.numel()
         for name, param in named_parameters
-        if param.requires_grad and name.startswith("tucker_shared_state_")
+        if param.requires_grad and name.startswith("astra_core_shared_state_")
     )
     classifier_trainable_params = sum(
         param.numel()
@@ -454,7 +454,7 @@ def run_from_cli(args):
             sweep_root = Path(args.sweep_output_dir)
         else:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            sweep_root = Path("./tucker_lora_sweeps") / f"{experiment_args_list[0].glue_task}_{timestamp}"
+            sweep_root = Path("./astra_core_sweeps") / f"{experiment_args_list[0].glue_task}_{timestamp}"
         sweep_root.mkdir(parents=True, exist_ok=True)
         print(f"Sweep output directory: {sweep_root}")
     else:

@@ -71,7 +71,7 @@ def save_trainable_checkpoint(
     """
     Save only the trainable parameters plus enough metadata to interpret the run.
 
-    In this PM variant, the trainable parameters can include:
+    In this ASTRA SFT variant, the trainable parameters can include:
     - additive Tucker core deltas
     - multiplicative mode-transform coefficients
     - the classifier head

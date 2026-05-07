@@ -1,56 +1,66 @@
-# TensLoRA-XS
+# ASTRA-Core
 
-Research code for TensLoRA-XS style family-wise Tucker adapters with additive core updates and multiplicative mode transforms on local GLUE tasks.
+Reference SFT code for the ASTRA blueprint's encoder-side Tucker family. In blueprint terms:
 
-This repository packages the `tenslora_xs` workflow into a GitHub-friendly structure so that other people can:
+- `--tuning-mode additive` corresponds to `ASTRA-Core`
+- `--tuning-mode multiplicative` corresponds to `ASTRA-Mode`
+- `--tuning-mode both` corresponds to `ASTRA-Hybrid`
 
-- understand the code layout,
-- install the dependencies,
-- prepare local GLUE datasets,
-- run single experiments or sweeps,
-- inspect saved adapter parameter counts and checkpoints.
+The current repository is a local-only research implementation for GLUE-style sequence classification. It is not yet the full ASTRA stack described in the blueprint. DPO, PPO, GRPO, ASTRA-G, and ASTRA-Muon are not implemented here.
+
+Authors: Zhang Qingquan, Jiang Yurui
+
+## 中文说明
+
+这是一个适合先公开、再写进简历的最小研究代码仓库版本。当前公开范围严格限定为：
+
+- encoder-style GLUE classification 的 ASTRA-Core / ASTRA-Mode / ASTRA-Hybrid SFT 实现
+- 不包含 DPO、PPO、GRPO、ASTRA-G、ASTRA-Muon
+- 不包含模型权重、数据集、训练产物
+
+中文代码导读见 [docs/CODE_MAP_zh.md](./docs/CODE_MAP_zh.md)。
 
 ## What This Repository Does
 
-The main training workflow:
+The main workflow:
 
 - loads a local Hugging Face sequence-classification model,
 - loads a locally saved GLUE dataset created with `datasets.save_to_disk()`,
 - builds Tucker/HOOI decomposition caches for selected attention or FFN families,
-- trains either additive, multiplicative, or combined Tucker adapter parameters,
+- trains additive, multiplicative, or combined Tucker adapter parameters,
 - saves trainable weights, metrics, histories, and parameter-count summaries.
 
-This project is currently aimed at encoder-style classification models that expose `encoder.layer`, such as RoBERTa-like architectures.
+The current code path is scoped to encoder-style classification models that expose `encoder.layer`, such as RoBERTa-like architectures.
 
 ## Repository Layout
 
 ```text
 .
-├── README.md
-├── LICENSE
-├── pyproject.toml
-├── requirements.txt
-├── train_tenslora_xs.py
-├── archive/
-│   └── legacy_monolith_backup.py
-├── docs/
-│   └── CODE_MAP_zh.md
-├── examples/
-│   ├── run_sst2.sh
-│   └── sweep_sst2.json
-├── scripts/
-│   └── prepare_glue_dataset.py
-└── tenslora_xs/
-    ├── __init__.py
-    ├── __main__.py
-    ├── artifacts.py
-    ├── cli.py
-    ├── constants.py
-    ├── experiment.py
-    ├── modeling.py
-    ├── sweep.py
-    ├── tasks.py
-    └── training_state.py
+|-- README.md
+|-- LICENSE
+|-- pyproject.toml
+|-- requirements.txt
+|-- train_astra_core.py
+|-- docs/
+|   `-- CODE_MAP_zh.md
+|-- examples/
+|   |-- run_sst2.sh
+|   `-- sweep_sst2.json
+|-- scripts/
+|   `-- prepare_glue_dataset.py
+|-- tests/
+|   `-- test_public_helpers.py
+`-- astra_core/
+    |-- __init__.py
+    |-- __main__.py
+    |-- artifacts.py
+    |-- cli.py
+    |-- constants.py
+    |-- experiment.py
+    |-- modeling.py
+    |-- sweep.py
+    |-- tasks.py
+    `-- training_state.py
 ```
 
 ## Installation
@@ -58,8 +68,8 @@ This project is currently aimed at encoder-style classification models that expo
 Python `3.10+` is recommended.
 
 ```bash
-git clone https://github.com/<your-name>/TensLoRA-XS.git
-cd TensLoRA-XS
+git clone https://github.com/<your-name>/ASTRA-Core.git
+cd ASTRA-Core
 python -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
@@ -76,7 +86,7 @@ pip install -r requirements.txt
 
 ### 1. Local model folder
 
-`--model-path` must point to a local Hugging Face model directory. For example, a RoBERTa checkpoint downloaded to disk.
+`--model-path` must point to a local Hugging Face model directory.
 
 ### 2. Local GLUE dataset folder
 
@@ -90,7 +100,7 @@ python scripts/prepare_glue_dataset.py \
   --output-dir ./local_datasets/glue_sst2
 ```
 
-Supported GLUE tasks in this repository:
+Supported GLUE tasks:
 
 - `sst2`
 - `mrpc`
@@ -106,25 +116,25 @@ You can run the project in three equivalent ways.
 ### Option 1. Run the package module
 
 ```bash
-python -m tenslora_xs --help
+python -m astra_core --help
 ```
 
 ### Option 2. Run the console script after `pip install -e .`
 
 ```bash
-tenslora-xs --help
+astra-core --help
 ```
 
 ### Option 3. Run the repository wrapper script
 
 ```bash
-python train_tenslora_xs.py --help
+python train_astra_core.py --help
 ```
 
 ## Single-Run Example
 
 ```bash
-python train_tenslora_xs.py \
+python train_astra_core.py \
   --model-path ./local_models/roberta-large \
   --dataset-path ./local_datasets/glue_sst2 \
   --glue-task sst2 \
@@ -140,13 +150,13 @@ python train_tenslora_xs.py \
   --per-device-eval-batch-size 32 \
   --num-train-epochs 3 \
   --decomposition-cache-dir ./tucker_hooi_cache/roberta_large \
-  --run-name pm_additive_sst2
+  --run-name astra_core_sst2
 ```
 
 For Linux servers:
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 python -m tenslora_xs \
+CUDA_VISIBLE_DEVICES=0 python -m astra_core \
   --model-path /data/models/roberta-large \
   --dataset-path /data/datasets/glue_sst2 \
   --glue-task sst2 \
@@ -157,13 +167,13 @@ CUDA_VISIBLE_DEVICES=0 python -m tenslora_xs \
   --multiplicative-num-bases 50 \
   --learning-rate 1e-3 \
   --num-train-epochs 3 \
-  --run-name pm_both_sst2
+  --run-name astra_hybrid_sst2
 ```
 
 To run in the background:
 
 ```bash
-nohup CUDA_VISIBLE_DEVICES=0 python train_tenslora_xs.py \
+nohup CUDA_VISIBLE_DEVICES=0 python train_astra_core.py \
   --model-path /data/models/roberta-large \
   --dataset-path /data/datasets/glue_sst2 \
   --glue-task sst2 \
@@ -174,8 +184,8 @@ nohup CUDA_VISIBLE_DEVICES=0 python train_tenslora_xs.py \
   --multiplicative-num-bases 50 \
   --learning-rate 1e-3 \
   --num-train-epochs 3 \
-  --run-name pm_both_sst2 \
-  > pm_both_sst2.log 2>&1 &
+  --run-name astra_hybrid_sst2 \
+  > astra_hybrid_sst2.log 2>&1 &
 ```
 
 ## Sweep Example
@@ -183,7 +193,7 @@ nohup CUDA_VISIBLE_DEVICES=0 python train_tenslora_xs.py \
 An example sweep spec is provided in [examples/sweep_sst2.json](./examples/sweep_sst2.json).
 
 ```bash
-python train_tenslora_xs.py \
+python train_astra_core.py \
   --model-path ./local_models/roberta-large \
   --dataset-path ./local_datasets/glue_sst2 \
   --glue-task sst2 \
@@ -193,15 +203,16 @@ python train_tenslora_xs.py \
 
 ## Saved Outputs
 
-For a single run, the code writes outputs such as:
+For a single unnamed run, the code writes:
 
-- `./tucker_lora_<task>_results/`
-- `./tucker_lora_<task>_final/`
+- `./astra_core_<task>_results/`
+- `./astra_core_<task>_final/`
 
-For a named run or sweep, it writes experiment folders such as:
+For named runs and sweeps, it writes:
 
-- `./tucker_lora_runs/<task>/<run_name>/results/`
-- `./tucker_lora_runs/<task>/<run_name>/final/`
+- `./astra_core_runs/<task>/<run_name>/results/`
+- `./astra_core_runs/<task>/<run_name>/final/`
+- `./astra_core_sweeps/<task>_<timestamp>/`
 
 Important saved artifacts include:
 
@@ -210,7 +221,7 @@ Important saved artifacts include:
 - `parameter_counts.json`
 - `experiment_config.json`
 - `experiment_summary.json`
-- `train_history.csv`
+- `train_loss_history.csv`
 - `eval_history.csv`
 
 `parameter_counts.json` stores:
@@ -222,19 +233,19 @@ Important saved artifacts include:
 - `all_params`
 - `trainable_ratio`
 
-## Project Assumptions And Limitations
+## Scope Notes
 
-- The current implementation expects encoder-based Hugging Face models with `encoder.layer`.
-- The current entry point is for sequence classification rather than causal language modeling.
-- The repository assumes local model folders instead of automatic remote downloads during training.
-- The repository assumes local GLUE datasets already saved to disk.
-- The code was organized to preserve the research logic, not to provide a fully generalized adapter library API.
+This repository is intentionally narrower than the full ASTRA blueprint. Before calling it a full public release, keep the scope statement explicit:
 
-## Additional Documentation
+- implemented here: encoder-side GLUE classification SFT with ASTRA-Core, ASTRA-Mode, and ASTRA-Hybrid style parameterizations
+- not implemented here: decoder-only instruction tuning, DPO, PPO, GRPO, ASTRA-G, ASTRA-Muon
+- architecture assumption: models must expose `encoder.layer`
 
-- Chinese code walkthrough: [docs/CODE_MAP_zh.md](./docs/CODE_MAP_zh.md)
-- Original monolithic reference script: [archive/legacy_monolith_backup.py](./archive/legacy_monolith_backup.py)
+## Public Release Checklist
 
-## License
+This repository is suitable for a minimal public release if you keep the framing narrow:
 
-This repository is released under the MIT License. See [LICENSE](./LICENSE).
+- publish it as the ASTRA-Core research-code repository, not as the full ASTRA project
+- do not upload local models, datasets, checkpoints, or experiment outputs
+- describe results only for experiments you can reproduce from this codebase
+- keep the README scope statement intact so external readers know what is and is not implemented

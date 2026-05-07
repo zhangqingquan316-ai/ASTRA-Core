@@ -3,12 +3,16 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "TensLoRA-XS"
+name = "ASTRA-Core"
 version = "0.1.0"
-description = "Research code for TensLoRA-XS style family-wise Tucker adapters with additive and multiplicative Tucker-core updates on GLUE tasks."
+description = "Reference SFT code for ASTRA-Core and its mode/hybrid variants on local GLUE classification tasks."
 readme = "README.md"
 requires-python = ">=3.10"
 license = { text = "MIT" }
+authors = [
+  { name = "张清泉" },
+  { name = "江宇睿" },
+]
 dependencies = [
   "torch>=2.1",
   "transformers>=4.40",
@@ -18,7 +22,7 @@ dependencies = [
   "numpy>=1.24",
   "matplotlib>=3.7",
 ]
-keywords = ["lora", "tucker", "adapter", "transformers", "glue", "research"]
+keywords = ["astra", "tucker", "peft", "transformers", "glue", "research"]
 classifiers = [
   "License :: OSI Approved :: MIT License",
   "Programming Language :: Python :: 3",
@@ -29,7 +33,10 @@ classifiers = [
 ]
 
 [project.scripts]
-tenslora-xs = "tenslora_xs.cli:main"
+astra-core = "astra_core.cli:main"
+
+[project.optional-dependencies]
+dev = []
 
 [tool.setuptools]
-packages = ["tenslora_xs"]
+packages = ["astra_core"]

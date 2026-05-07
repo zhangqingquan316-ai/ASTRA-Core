@@ -1,4 +1,4 @@
-"""Tensor reshaping, Tucker/HOOI decomposition caches, and PM adapter patching."""
+"""Tensor reshaping, Tucker/HOOI decomposition caches, and ASTRA layer patching."""
 
 import math
 from pathlib import Path
@@ -131,7 +131,7 @@ def matrix_to_canonical_ffn_tensor(weight, canonical_shape=None):
 
 def build_fixed_basis_matrices(rank, num_bases, seed):
     """
-    Build the fixed TinyLoRA-style basis matrices used for multiplicative mode tuning.
+    Build the fixed basis matrices used for ASTRA-Mode / ASTRA-Hybrid tuning.
 
     These basis matrices are frozen. Only the combination coefficients are trained.
     """
@@ -270,7 +270,7 @@ class TuckerFamilySharedState(nn.Module):
         """
         Apply the learned multiplicative transforms to every Tucker-core mode.
 
-        This is the PM-specific step: before choosing a concrete layer, the shared core
+        This is the mode-adaptation step: before choosing a concrete layer, the shared core
         is first transformed along every mode by learned square matrices.
         """
         if not self.has_multiplicative:
@@ -738,7 +738,7 @@ def patch_model_with_tucker(model, decomposition_results):
     reads from the same shared state and only differs by its contracted indices.
     """
     family_name = decomposition_results["family_name"]
-    shared_state_name = f"tucker_shared_state_{family_name}"
+    shared_state_name = f"astra_core_shared_state_{family_name}"
     shared_state = TuckerFamilySharedState(
         family_name=family_name,
         base_core=decomposition_results["base_core"],

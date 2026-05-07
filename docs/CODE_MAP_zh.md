@@ -1,106 +1,105 @@
-# TensLoRA-XS 代码导读
+# ASTRA-Core 代码导读
 
-这份文档主要服务于“读懂代码”和“对齐论文操作”，对应的公开仓库根目录见上一级 `README.md`。
+这份文档对应当前仓库的 SFT 参考实现。和蓝图的关系如下：
 
-## 推荐阅读顺序
+- `additive` 模式对应 `ASTRA-Core`
+- `multiplicative` 模式对应 `ASTRA-Mode`
+- `both` 模式对应 `ASTRA-Hybrid`
 
-1. `tenslora_xs/cli.py`
-   只负责命令行参数解析。
-2. `tenslora_xs/experiment.py`
-   负责完整实验流程：加载模型、读取 decomposition cache、训练、评估、保存结果。
-3. `tenslora_xs/modeling.py`
-   负责最核心的张量化、Tucker 分解缓存、乘性/加性调节和 patch 逻辑。
+当前仓库只覆盖 encoder-side GLUE 分类训练，不包含 DPO、PPO、GRPO、ASTRA-G、ASTRA-Muon。
 
-## 这份代码和 HOSVD 版最大的不同
+## 入口文件
 
-- HOSVD 版更接近：
-  - 固定 basis
-  - 训练一个小的 `delta_core`
-- PM 版在此基础上加入了：
-  - 对 Tucker core 每个 mode 的乘性线性变换
-  - 每个 mode 的变换不是直接学习一个满矩阵，而是学习固定 basis 的线性组合系数
+1. `astra_core/cli.py`
+   负责命令行参数解析，并把参数交给实验执行层。
+2. `astra_core/experiment.py`
+   负责单次实验和 sweep 的总流程，包括数据加载、分解缓存、模型 patch、训练、评估和结果落盘。
+3. `astra_core/modeling.py`
+   负责 family 张量化、Tucker/HOOI 分解缓存、共享状态构造，以及把线性层替换成 ASTRA 适配层。
 
-最值得重点看的函数：
+## 训练流程
+
+1. 根据 `--target-families` 选择要处理的 attention / FFN family。
+2. 把同一 family 的矩阵组织成高阶张量。
+3. 对 family 张量做 Tucker/HOOI 分解，得到：
+   - `base_core`
+   - contracted factor matrices
+   - remaining mode factors
+4. 根据 `--tuning-mode` 构造可训练部分：
+   - `additive`: 训练 `delta_core`
+   - `multiplicative`: 训练 mode transform coefficients
+   - `both`: 同时训练两者
+5. 用 `TuckerAdaptedLinear` 回写到原模型线性层。
+6. 训练结束后保存 trainable state、曲线、配置和参数统计。
+
+## 关键类和函数
 
 - `MultiplicativeModeAdapter`
+  为每个 Tucker mode 学一个方阵变换。
 - `TuckerFamilySharedState`
-- `TuckerAdaptedLinear.forward`
+  保存 family 级共享状态，包括 `base_core`、可训练增量和 mode transforms。
+- `TuckerAdaptedLinear`
+  在前向中重建该层的有效权重。
 - `build_attention_tucker_basis_cache`
+  为 attention family 构造分解缓存。
 - `build_ffn_tucker_basis_cache`
+  为 FFN family 构造分解缓存。
 - `get_or_create_decomposition_cache_entry`
+  读取或创建缓存文件。
 - `run_single_experiment`
+  执行一次完整训练。
 
-## 和论文操作的对应关系
+## 参数统计口径
 
-- 先对一个 family 的原始权重做 Tucker/HOOI 分解，得到：
-  - `base_core`
-  - 各 mode 的 factor matrices
-- 训练阶段有三种模式：
-  - `additive`：只训练 `delta_core`
-  - `multiplicative`：只训练每个 mode 的变换系数
-  - `both`：两者都训练
-- 每个被替换的线性层共享同一个 family 的状态：
-  - 同一个 `base_core`
-  - 同一组可训练参数
-  - 根据自己所在层或阶段选择不同的 contracted factor row
-- 最终有效权重不是“直接覆盖原权重”，而是：
-  - 先重建一个调节后的 Tucker 权重
-  - 再和预先保存的 residual weight 拼回完整线性层
-
-## 参数量统计怎么看
+`experiment.py` 中的 `compute_parameter_statistics()` 会输出：
 
 - `adapter_params`
-  - 只统计 `tucker_shared_state_*` 里的可训练参数
-  - 对应这套算法真正新增并参与训练的 adapter 参数量
-  - 在 `additive` 模式下，主要是 `delta_core`
-  - 在 `multiplicative` 模式下，主要是每个 mode 的 basis 组合系数
-  - 在 `both` 模式下，两部分都会被统计进去
+  只统计 `astra_core_shared_state_*` 下的可训练参数。
 - `classifier_trainable_params`
-  - 分类头的可训练参数量，不算进 adapter 本体
+  统计分类头可训练参数。
 - `other_trainable_params`
-  - 理论上通常应当接近 0
-  - 如果这里明显大于 0，说明还有别的参数被意外解冻了
+  统计剩余可训练参数，理想情况下应接近 0。
+- `total_trainable_params`
+  全部可训练参数总数。
 - `all_params`
-  - 整个模型总参数量，包括冻结参数
+  模型总参数量。
+- `trainable_ratio`
+  可训练参数占比。
 
-## 参数量最后会不会保存
+## 输出文件
 
-会保存，而且保存了两份，便于之后做实验核对：
+一次实验通常会产生：
 
 - `trainable_state.pt`
-  - 真正的可训练参数权重
 - `training_config.json`
-  - 完整实验配置，其中包含 `parameter_stats`
 - `parameter_counts.json`
-  - 单独导出的参数量统计文件，适合快速查看
+- `experiment_config.json`
+- `experiment_summary.json`
+- `train_loss_history.csv`
+- `eval_history.csv`
+- 训练曲线 PNG
 
-## 服务器运行命令示例
-
-单次实验：
+## 常用命令
 
 ```bash
-python -m tenslora_xs \
+python -m astra_core \
   --model-path /data/models/roberta-large \
   --dataset-path /data/datasets/glue_sst2 \
   --glue-task sst2 \
   --target-families q k v o \
   --attn-ranks 4 4 16 32 \
   --ffn-ranks 2 4 64 64 \
-  --attn-alpha 1.0 \
-  --ffn-alpha 1.0 \
   --tuning-mode additive \
   --multiplicative-num-bases 50 \
   --learning-rate 1e-3 \
-  --per-device-train-batch-size 32 \
-  --per-device-eval-batch-size 32 \
   --num-train-epochs 3 \
-  --run-name pm_additive_sst2
+  --run-name astra_core_sst2
 ```
 
-后台运行：
+后台运行示例：
 
 ```bash
-nohup python -m tenslora_xs \
+nohup python -m astra_core \
   --model-path /data/models/roberta-large \
   --dataset-path /data/datasets/glue_sst2 \
   --glue-task sst2 \
@@ -111,6 +110,6 @@ nohup python -m tenslora_xs \
   --multiplicative-num-bases 50 \
   --learning-rate 1e-3 \
   --num-train-epochs 3 \
-  --run-name pm_both_sst2 \
-  > pm_both_sst2.log 2>&1 &
+  --run-name astra_hybrid_sst2 \
+  > astra_hybrid_sst2.log 2>&1 &
 ```

@@ -1,4 +1,4 @@
-"""Package entry point for ``python -m tenslora_xs``."""
+"""Package entry point for ``python -m astra_core``."""
 
 import os
 

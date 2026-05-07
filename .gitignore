@@ -32,6 +32,10 @@ local_datasets/
 tucker_lora_*_results/
 tucker_lora_*_final/
 tucker_lora_runs/
+astra_core_*_results/
+astra_core_*_final/
+astra_core_runs/
+astra_core_sweeps/
 runs/
 tucker_hooi_cache/
 

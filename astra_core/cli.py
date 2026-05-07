@@ -9,7 +9,7 @@ from .experiment import run_from_cli
 
 def parse_args():
     parser = argparse.ArgumentParser(
-        description="Train family-wise Tucker adapters with Tucker/HOOI decomposition caches on local GLUE tasks."
+        description="Train ASTRA-Core family-wise Tucker adapters with Tucker/HOOI decomposition caches on local GLUE tasks."
     )
     parser.add_argument(
         "--model-path",
@@ -74,7 +74,7 @@ def parse_args():
         "--tuning-mode",
         choices=["additive", "multiplicative", "both"],
         default="additive",
-        help="Which Tucker adapter parameterization to train: additive core update, multiplicative core-mode transform, or both.",
+        help="Which ASTRA SFT variant to train: additive core update (ASTRA-Core), multiplicative core-mode transform (ASTRA-Mode), or both (ASTRA-Hybrid).",
     )
     parser.add_argument(
         "--multiplicative-num-bases",
@@ -82,7 +82,7 @@ def parse_args():
         dest="multiplicative_num_bases",
         type=int,
         default=50,
-        help="Number of TinyLoRA-style fixed basis matrices for each Tucker-core mode transform used in multiplicative tuning.",
+        help="Number of fixed basis matrices for each Tucker-core mode transform used in multiplicative tuning.",
     )
     parser.add_argument("--max-length", type=int, default=128, help="Tokenizer max length.")
     parser.add_argument("--learning-rate", type=float, default=1e-3, help="Learning rate.")

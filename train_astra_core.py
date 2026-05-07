@@ -1,10 +1,10 @@
-"""Convenience wrapper for running TensLoRA-XS from the repository root."""
+"""Convenience wrapper for running ASTRA-Core from the repository root."""
 
 import os
 
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
-from tenslora_xs.cli import main
+from astra_core.cli import main
 
 
 if __name__ == "__main__":

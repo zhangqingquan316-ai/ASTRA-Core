@@ -1,0 +1,30 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install package
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Compile Python sources
+        run: |
+          python -m py_compile train_astra_core.py astra_core/__init__.py astra_core/__main__.py astra_core/artifacts.py astra_core/cli.py astra_core/constants.py astra_core/experiment.py astra_core/modeling.py astra_core/sweep.py astra_core/tasks.py astra_core/training_state.py tests/test_public_helpers.py
+
+      - name: Run unit tests
+        run: |
+          python -m unittest discover -s tests

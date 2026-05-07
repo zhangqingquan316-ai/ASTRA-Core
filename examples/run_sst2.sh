@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-python train_tenslora_xs.py \
+python train_astra_core.py \
   --model-path ./local_models/roberta-large \
   --dataset-path ./local_datasets/glue_sst2 \
   --glue-task sst2 \
@@ -15,4 +15,4 @@ python train_tenslora_xs.py \
   --per-device-train-batch-size 32 \
   --per-device-eval-batch-size 32 \
   --num-train-epochs 3 \
-  --run-name pm_additive_sst2
+  --run-name astra_core_sst2

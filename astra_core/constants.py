@@ -1,4 +1,4 @@
-"""Static configuration shared across the Tucker-LoRA PM workflow."""
+"""Static configuration shared across the ASTRA-Core workflow."""
 
 ATTENTION_FAMILY_SUFFIXES = {
     "q": [".attention.self.query", ".self_attn.q_proj", ".q_proj"],
