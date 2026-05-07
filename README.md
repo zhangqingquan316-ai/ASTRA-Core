@@ -12,7 +12,7 @@ Authors: Zhang Qingquan, Jiang Yurui
 
 ## 中文说明
 
-这是一个适合先公开、再写进简历的最小研究代码仓库版本。当前公开范围严格限定为：
+这是一个预先公开的最小研究代码仓库版本。当前公开范围严格限定为：
 
 - encoder-style GLUE classification 的 ASTRA-Core / ASTRA-Mode / ASTRA-Hybrid SFT 实现
 - 不包含 DPO、PPO、GRPO、ASTRA-G、ASTRA-Muon
