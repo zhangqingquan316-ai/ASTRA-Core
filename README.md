@@ -4,7 +4,7 @@ Hi!
 
 This repository is the public research-code repository for **ASTRA-Core**, the first implemented stage of our broader **ASTRA** project, developed around the blueprint **"Parameters are Tensor Fields: Multilinear Geometry for Efficient LLM Adaptation and Post-Training."**
 
-**ASTRA** stands for **A**daptive **S**pectral **T**ensor **R**eparameterized **A**lignment. The central idea is to stop treating Transformer parameters as isolated matrices and instead organize compatible weights into **family-wise tensor fields**, where structure across layers, projection types, and hidden dimensions can be modeled explicitly.
+**ASTRA** stands for **A**lgebraic **S**pectral **T**ensor **R**ank **A**daption. The central idea is to stop treating Transformer parameters as isolated matrices and instead organize compatible weights into **family-wise tensor fields**, where structure across layers, projection types, and hidden dimensions can be modeled explicitly.
 
 The current release focuses on the encoder-side supervised fine-tuning setting: family-wise Tucker/HOSVD decompositions, additive core updates, multiplicative mode transforms, and their hybrid combination for local GLUE classification tasks.
 
