@@ -209,8 +209,13 @@ class TuckerFamilySharedState(nn.Module):
         super().__init__()
         self.family_name = family_name
         self.tuning_mode = tuning_mode
-        self.has_additive = tuning_mode in {"additive", "both"}
+        if tuning_mode not in {"additive", "multiplicative", "both", "manifold"}:
+            raise ValueError(f"Unsupported tuning mode: {tuning_mode}")
+        self.has_additive = tuning_mode in {"additive", "both", "manifold"}
         self.has_multiplicative = tuning_mode in {"multiplicative", "both"}
+        self.is_manifold = tuning_mode == "manifold"
+        self.probe_factors = True
+        self.active_modes = set()
         self.num_contracted_modes = len(factor_matrices)
         self.num_remaining_modes = len(remaining_mode_factors)
 
@@ -221,9 +226,9 @@ class TuckerFamilySharedState(nn.Module):
             self.register_buffer("delta_core_placeholder", torch.zeros_like(base_core).contiguous())
 
         for idx, factor in enumerate(factor_matrices):
-            self.register_buffer(f"contracted_factor_matrix_{idx}", factor.contiguous())
+            self._register_factor(f"contracted_factor_matrix_{idx}", factor)
         for idx, factor in enumerate(remaining_mode_factors):
-            self.register_buffer(f"remaining_mode_factor_{idx}", factor.contiguous())
+            self._register_factor(f"remaining_mode_factor_{idx}", factor)
 
         mode_ranks = [factor.shape[1] for factor in factor_matrices] + [
             factor.shape[1] for factor in remaining_mode_factors
@@ -242,6 +247,30 @@ class TuckerFamilySharedState(nn.Module):
         else:
             self.mode_transform_adapters = nn.ModuleList()
 
+    def _register_factor(self, name, factor):
+        factor = factor.contiguous().clone()
+        if self.is_manifold:
+            identity = torch.eye(factor.shape[1], dtype=factor.dtype, device=factor.device)
+            if not torch.allclose(factor.T @ factor, identity, atol=2e-5, rtol=2e-5):
+                raise ValueError("Manifold mode requires orthonormal Tucker factors.")
+            self.register_parameter(name, nn.Parameter(factor))
+        else:
+            self.register_buffer(name, factor)
+
+    def manifold_factors(self):
+        """Ordered factors, including layer/stage modes, without detaching."""
+        return [getattr(self, f"contracted_factor_matrix_{i}")
+                for i in range(self.num_contracted_modes)] + [
+            getattr(self, f"remaining_mode_factor_{i}")
+            for i in range(self.num_remaining_modes)]
+
+    def _factor_for_forward(self, factor, mode):
+        # Stable Parameter registration keeps checkpoints complete; detach only
+        # suppresses unused factor-gradient paths between periodic probes.
+        if self.is_manifold and not (self.probe_factors or mode in self.active_modes):
+            return factor.detach()
+        return factor
+
     def get_updated_core(self, dtype):
         """Return the additive-updated core for additive/both tuning modes."""
         base_core = self.base_core.to(dtype)
@@ -256,14 +285,14 @@ class TuckerFamilySharedState(nn.Module):
     def get_contracted_factor_row(self, mode_idx, row_idx, dtype):
         """Return the factor row that corresponds to one specific layer/stage index."""
         factor = getattr(self, f"contracted_factor_matrix_{mode_idx}")
-        return factor.to(dtype)[int(row_idx)]
+        return self._factor_for_forward(factor, mode_idx).to(dtype)[int(row_idx)]
 
     def get_remaining_factors(self, dtype):
         """Return the non-contracted factor matrices used after layer selection."""
         factors = []
         for idx in range(self.num_remaining_modes):
             factor = getattr(self, f"remaining_mode_factor_{idx}")
-            factors.append(factor.to(dtype))
+            factors.append(self._factor_for_forward(factor, self.num_contracted_modes + idx).to(dtype))
         return factors
 
     def apply_mode_transforms(self, core_tensor, dtype):
@@ -319,27 +348,22 @@ class TuckerAdaptedLinear(nn.Module):
 
         object.__setattr__(self, "shared_state", shared_state)
 
-        # Split the original dense weight into:
-        # 1) a Tucker prior reconstructed from the pretrained decomposition
-        # 2) a residual term not explained by that Tucker prior
+        # Keep the starting Tucker weight as an immutable anchor. The original
+        # base weight already contains the residual; no extra residual copy.
         with torch.no_grad():
             base_dtype = self.base_layer.weight.dtype
             base_device = self.base_layer.weight.device
+            compose_dtype = torch.float64 if base_dtype == torch.float64 else torch.float32
             prior_tensor = self._compose_tensor(
-                self.shared_state.get_base_core(torch.float32),
-                current_dtype=torch.float32,
+                self.shared_state.get_base_core(compose_dtype),
+                current_dtype=compose_dtype,
                 apply_mode_transforms=False,
             )
             prior_weight = tensor_to_matrix(prior_tensor, self.matrix_shape, self.reshape_kind)
-            residual_weight = self.base_layer.weight.detach().to(torch.float32) - prior_weight
 
         self.register_buffer(
             "prior_tucker_weight",
             prior_weight.to(device=base_device, dtype=base_dtype).contiguous(),
-        )
-        self.register_buffer(
-            "residual_weight",
-            residual_weight.to(device=base_device, dtype=base_dtype).contiguous(),
         )
 
     def _compose_tensor(self, core_tensor, current_dtype, apply_mode_transforms):
@@ -384,7 +408,17 @@ class TuckerAdaptedLinear(nn.Module):
         """
         current_dtype = x.dtype
 
-        if self.shared_state.tuning_mode == "additive":
+        if self.shared_state.tuning_mode == "manifold":
+            # Match the anchor's FP32 reconstruction under mixed precision.
+            # Otherwise autocast roundoff alone creates a nonzero adapter at init.
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                compose_dtype = self.shared_state.base_core.dtype
+                adapted_tensor = self._compose_tensor(
+                    self.shared_state.get_updated_core(compose_dtype),
+                    current_dtype=compose_dtype,
+                    apply_mode_transforms=False,
+                ).to(current_dtype)
+        elif self.shared_state.tuning_mode == "additive":
             adapted_tensor = self._compose_tensor(
                 self.shared_state.get_updated_core(current_dtype),
                 current_dtype=current_dtype,
@@ -408,8 +442,7 @@ class TuckerAdaptedLinear(nn.Module):
 
         # alpha=1 means fully trust the tuned Tucker branch.
         # alpha<1 means interpolate between the pretrained Tucker prior and the tuned Tucker weight.
-        tuned_tucker_weight = prior_weight + self.alpha * (adapted_weight - prior_weight)
-        effective_weight = self.residual_weight.to(current_dtype) + tuned_tucker_weight
+        effective_weight = self.base_layer.weight.to(current_dtype) + self.alpha * (adapted_weight - prior_weight)
 
         output = torch.matmul(x, effective_weight.t())
         if self.base_layer.bias is not None:

@@ -48,7 +48,7 @@ def normalize_sweep_spec(spec):
     """Translate CLI-style sweep keys into argparse-style attribute names."""
     normalized = {}
     for key, value in spec.items():
-        normalized[SWEEP_KEY_ALIASES.get(key, key)] = value
+        normalized[SWEEP_KEY_ALIASES.get(key, key.replace("-", "_"))] = value
     return normalized
 
 

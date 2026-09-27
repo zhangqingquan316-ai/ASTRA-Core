@@ -1,0 +1,17 @@
+[
+  {"name": "legacy_core_s42", "tuning_mode": "additive", "seed": 42},
+  {"name": "controlled_core_s42", "tuning_mode": "manifold", "manifold_policy": "core", "seed": 42},
+  {"name": "all_modes_s42", "tuning_mode": "manifold", "manifold_policy": "all", "seed": 42},
+  {"name": "adaptive_s42", "tuning_mode": "manifold", "manifold_policy": "adaptive", "seed": 42},
+  {"name": "random_s42", "tuning_mode": "manifold", "manifold_policy": "random", "seed": 42},
+  {"name": "adaptive_no_cost_s42", "tuning_mode": "manifold", "manifold_cost_power": 0, "seed": 42},
+  {"name": "adaptive_probe1_s42", "tuning_mode": "manifold", "manifold_probe_interval": 1, "seed": 42},
+  {"name": "adaptive_s43", "tuning_mode": "manifold", "seed": 43},
+  {"name": "adaptive_s44", "tuning_mode": "manifold", "seed": 44},
+  {"name": "controlled_core_s43", "tuning_mode": "manifold", "manifold_policy": "core", "seed": 43},
+  {"name": "controlled_core_s44", "tuning_mode": "manifold", "manifold_policy": "core", "seed": 44},
+  {"name": "all_modes_s43", "tuning_mode": "manifold", "manifold_policy": "all", "seed": 43},
+  {"name": "all_modes_s44", "tuning_mode": "manifold", "manifold_policy": "all", "seed": 44},
+  {"name": "random_s43", "tuning_mode": "manifold", "manifold_policy": "random", "seed": 43},
+  {"name": "random_s44", "tuning_mode": "manifold", "manifold_policy": "random", "seed": 44}
+]

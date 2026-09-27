@@ -23,7 +23,7 @@ jobs:
 
       - name: Compile Python sources
         run: |
-          python -m py_compile train_astra_core.py astra_core/__init__.py astra_core/__main__.py astra_core/artifacts.py astra_core/cli.py astra_core/constants.py astra_core/experiment.py astra_core/modeling.py astra_core/sweep.py astra_core/tasks.py astra_core/training_state.py tests/test_public_helpers.py
+          python -m compileall -q astra_core tests scripts train_astra_core.py
 
       - name: Run unit tests
         run: |

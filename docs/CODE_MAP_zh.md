@@ -1,5 +1,21 @@
 # ASTRA-Core 代码导读
 
+## v0.2：ASTRA-Tangent
+
+新版默认 `--tuning-mode manifold`，原三种模式保留。算法推导、相关论文与实验计划见 [RESEARCH_zh.md](RESEARCH_zh.md)。
+
+- `astra_core/manifold.py`：水平梯度、核心 Gram 预条件、极分解回缩、模态预算选择、混合优化器及控制器状态恢复。
+- `astra_core/modeling.py`：manifold 模式将 Tucker 因子注册为参数；根据探测计划 detach 非活动因子，维持固定初始锚点。
+- `astra_core/experiment.py`：优化器接入 Trainer、梯度累积、几何日志与资源统计。
+- `astra_core/checkpoint.py`：利用保存的初始分解在原基座上恢复适配器。
+- `tests/test_manifold.py`：几何性质、冻结/恢复、合成任务和微型 BERT 端到端验证。
+- `scripts/smoke_train.py`：离线构造微型模型/数据，验证实际 CLI、四种策略 sweep 和最终检查点重载。
+- `examples/sweep_tangent_sst2.json`：新版消融与多种子实验入口。
+
+以下是原 ASTRA-Core/Mode/Hybrid 的导读；其中“固定因子”只适用于旧模式，不适用于新版 manifold 模式。
+
+## 原版结构
+
 这份文档对应当前仓库的 SFT 参考实现。和蓝图的关系如下：
 
 - `additive` 模式对应 `ASTRA-Core`

@@ -2,6 +2,7 @@
 
 import csv
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 try:
@@ -17,6 +18,7 @@ import torch
 
 from .tasks import get_prefixed_metric_key, get_primary_eval_metric_key, get_task_config
 from .training_state import get_trainable_state
+from .manifold import ManifoldConfig
 
 
 def save_json(path, payload):
@@ -109,6 +111,9 @@ def save_trainable_checkpoint(
         "decomposition_method": "tucker_hooi_svd_init",
         "decomposition_cache_dir": getattr(args, "_resolved_decomposition_cache_dir", None),
         "parameter_stats": parameter_stats,
+        "manifold_config": asdict(ManifoldConfig.from_args(args)) if args.tuning_mode == "manifold" else None,
+        "gradient_accumulation_steps": getattr(args, "gradient_accumulation_steps", 1),
+        "checkpoint_kind": "adapter_inference_with_basis; not a Trainer resume checkpoint",
     }
     save_json(output_path / "training_config.json", metadata)
     save_json(output_path / "parameter_counts.json", parameter_stats)
@@ -324,6 +329,8 @@ def create_sweep_summary_rows(experiment_results, task_name):
                 "attn_alpha": config["attn_alpha"],
                 "ffn_alpha": config["ffn_alpha"],
                 "tuning_mode": config.get("tuning_mode"),
+                "manifold_policy": (config.get("manifold_config") or {}).get("policy"),
+                "seed": config.get("seed"),
                 "multiplicative_num_bases": config.get("multiplicative_num_bases"),
                 "num_train_epochs": config["num_train_epochs"],
                 "learning_rate": config["learning_rate"],

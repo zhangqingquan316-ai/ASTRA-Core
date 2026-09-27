@@ -72,10 +72,21 @@ def parse_args():
     )
     parser.add_argument(
         "--tuning-mode",
-        choices=["additive", "multiplicative", "both"],
-        default="additive",
-        help="Which ASTRA SFT variant to train: additive core update (ASTRA-Core), multiplicative core-mode transform (ASTRA-Mode), or both (ASTRA-Hybrid).",
+        choices=["additive", "multiplicative", "both", "manifold"],
+        default="manifold",
+        help="ASTRA-Tangent (manifold, default), or legacy additive/multiplicative/both baselines.",
     )
+    parser.add_argument("--manifold-policy", choices=["adaptive", "all", "core", "random"], default="adaptive")
+    parser.add_argument("--manifold-probe-interval", type=int, default=10)
+    parser.add_argument("--manifold-warmup-steps", type=int, default=20)
+    parser.add_argument("--manifold-max-active-modes", type=int, default=2)
+    parser.add_argument("--manifold-escape-threshold", type=float, default=0.15)
+    parser.add_argument("--manifold-capture-fraction", type=float, default=0.8)
+    parser.add_argument("--manifold-cost-power", type=float, default=1.0)
+    parser.add_argument("--manifold-damping", type=float, default=1e-3)
+    parser.add_argument("--manifold-factor-lr-scale", type=float, default=1.0)
+    parser.add_argument("--manifold-max-factor-step", type=float, default=0.05)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=1)
     parser.add_argument(
         "--multiplicative-num-bases",
         "--factor-tuning-params",

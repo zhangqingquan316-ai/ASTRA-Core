@@ -1,8 +1,11 @@
 """High-level experiment workflow for ASTRA-Core training."""
 
 import gc
+import inspect
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
+from time import perf_counter
 
 from datasets import load_from_disk
 import torch
@@ -36,6 +39,7 @@ from .modeling import (
 from .sweep import get_model_tag, load_sweep_experiments, resolve_target_families
 from .tasks import build_compute_metrics, get_primary_eval_metric_key, get_task_config, validate_local_inputs
 from .training_state import BestModelByMetricCallback, load_trainable_state
+from .manifold import ManifoldConfig, TangentAdamW
 
 
 def cleanup_experiment_memory():
@@ -149,6 +153,7 @@ def build_training_arguments(args, results_dir):
     use_bf16 = bf16_supported
     use_fp16 = torch.cuda.is_available() and not use_bf16
 
+    eval_key = "eval_strategy" if "eval_strategy" in inspect.signature(TrainingArguments).parameters else "evaluation_strategy"
     return TrainingArguments(
         output_dir=str(results_dir),
         overwrite_output_dir=True,
@@ -157,7 +162,7 @@ def build_training_arguments(args, results_dir):
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         num_train_epochs=args.num_train_epochs,
         weight_decay=args.weight_decay,
-        evaluation_strategy="epoch",
+        **{eval_key: "epoch"},
         save_strategy="no",
         logging_steps=50,
         bf16=use_bf16,
@@ -165,6 +170,10 @@ def build_training_arguments(args, results_dir):
         save_safetensors=False,
         report_to="none",
         seed=args.seed,
+        gradient_accumulation_steps=getattr(args, "gradient_accumulation_steps", 1),
+        # Coordinate-gradient clipping changes when probe paths are attached.
+        # Factor updates have their own geometric step cap instead.
+        max_grad_norm=0.0 if args.tuning_mode == "manifold" else 1.0,
     )
 
 
@@ -201,6 +210,13 @@ def compute_parameter_statistics(model):
         "total_trainable_params": int(total_trainable_params),
         "all_params": int(all_params),
         "trainable_ratio": trainable_ratio,
+        "manifold_factor_params": sum(p.numel() for m in model.modules()
+                                      if getattr(m, "is_manifold", False)
+                                      for p in m.manifold_factors()),
+        "registered_buffer_bytes": sum(b.numel() * b.element_size() for b in model.buffers()),
+        "manifold_horizontal_dof": sum(p.shape[1] * (p.shape[0] - p.shape[1])
+                                       for m in model.modules() if getattr(m, "is_manifold", False)
+                                       for p in m.manifold_factors()),
     }
 
 
@@ -213,6 +229,7 @@ def run_single_experiment(
 ):
     """Run one fully specified experiment from start to finish."""
     set_seed(args.seed)
+    manifold_config = ManifoldConfig.from_args(args) if args.tuning_mode == "manifold" else None
 
     experiment_root, results_dir, final_dir = prepare_experiment_dirs(args, sweep_root=sweep_root)
     experiment_root.mkdir(parents=True, exist_ok=True)
@@ -307,16 +324,26 @@ def run_single_experiment(
     compute_metrics = build_compute_metrics(args.glue_task)
     training_args = build_training_arguments(args, results_dir)
     best_callback = BestModelByMetricCallback(metric_name=primary_eval_metric_key)
+    manifold_optimizer = None
+    if manifold_config is not None:
+        if training_args.world_size != 1 or training_args.n_gpu > 1:
+            raise ValueError("ASTRA-Tangent supports CPU or one visible GPU; set CUDA_VISIBLE_DEVICES for a single GPU.")
+        # Construct after device placement, before Trainer creates its scheduler.
+        model.to(training_args.device)
+        manifold_optimizer = TangentAdamW(model, lr=args.learning_rate,
+                                         weight_decay=args.weight_decay, config=manifold_config)
 
+    tokenizer_key = "processing_class" if "processing_class" in inspect.signature(Trainer).parameters else "tokenizer"
     trainer = Trainer(
         model=model,
         args=training_args,
         train_dataset=tokenized_datasets["train"],
         eval_dataset=tokenized_datasets["validation"],
-        tokenizer=tokenizer,
+        **{tokenizer_key: tokenizer},
         data_collator=data_collator,
         compute_metrics=compute_metrics,
         callbacks=[best_callback],
+        optimizers=(manifold_optimizer, None),
     )
 
     print("Computing initial metrics before training...")
@@ -331,8 +358,27 @@ def run_single_experiment(
     trainer.state.log_history.clear()
 
     print("Starting training...")
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+        torch.cuda.reset_peak_memory_stats()
+    training_started = perf_counter()
     trainer.train()
+    if torch.cuda.is_available():
+        torch.cuda.synchronize()
+    training_resources = {
+        "train_and_epoch_eval_seconds": perf_counter() - training_started,
+        "cuda_peak_allocated_bytes": torch.cuda.max_memory_allocated() if torch.cuda.is_available() else None,
+        "cuda_peak_reserved_bytes": torch.cuda.max_memory_reserved() if torch.cuda.is_available() else None,
+        "device": str(training_args.device),
+        "torch_version": str(torch.__version__),
+    }
     plot_log_history = list(trainer.state.log_history)
+    if manifold_optimizer is not None:
+        save_json(experiment_root / "manifold_history.json", {
+            "config": asdict(manifold_config), "completed_steps": manifold_optimizer.completed_steps,
+            "skipped_steps": manifold_optimizer.skipped_steps,
+            "records": manifold_optimizer.history,
+        })
 
     if best_callback.best_state is not None:
         print(
@@ -368,6 +414,9 @@ def run_single_experiment(
         resolved_dataset_path=resolved_dataset_path,
         parameter_stats=parameter_stats,
     )
+    # Frozen starting cores/factors are necessary to reconstruct the anchored
+    # adapter, and cannot be inferred from the final learned factors.
+    torch.save(decomposition_results, final_dir / "adapter_basis.pt")
     save_history_artifacts(
         output_dir=experiment_root,
         train_history=train_history,
@@ -403,6 +452,8 @@ def run_single_experiment(
         "decomposition_method": "tucker_hooi_svd_init",
         "decomposition_cache_dir": getattr(args, "_resolved_decomposition_cache_dir", None),
         "parameter_stats": parameter_stats,
+        "manifold_config": asdict(manifold_config) if manifold_config else None,
+        "gradient_accumulation_steps": getattr(args, "gradient_accumulation_steps", 1),
     }
 
     summary_payload = {
@@ -416,6 +467,7 @@ def run_single_experiment(
         "experiment_dir": str(experiment_root.resolve()),
         "final_dir": str(final_dir.resolve()),
         "parameter_stats": parameter_stats,
+        "training_resources": training_resources,
     }
 
     save_json(experiment_root / "experiment_config.json", experiment_config)
@@ -436,6 +488,7 @@ def run_single_experiment(
     }
 
     del trainer
+    del manifold_optimizer
     del model
     del tokenized_datasets
     del dataset
