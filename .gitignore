@@ -28,6 +28,9 @@ Thumbs.db
 local_models/
 local_datasets/
 
+# Local SSH notes / credentials
+/0.txt
+
 # Training outputs
 tucker_lora_*_results/
 tucker_lora_*_final/

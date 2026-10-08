@@ -96,7 +96,18 @@ def parse_args():
         help="Number of fixed basis matrices for each Tucker-core mode transform used in multiplicative tuning.",
     )
     parser.add_argument("--max-length", type=int, default=128, help="Tokenizer max length.")
-    parser.add_argument("--learning-rate", type=float, default=1e-3, help="Learning rate.")
+    parser.add_argument("--learning-rate", "--encoder-learning-rate", type=float, default=1e-3,
+                        help="Encoder adapter learning rate; also the head rate unless overridden.")
+    parser.add_argument("--classifier-learning-rate", "--head-learning-rate", type=float, default=None,
+                        help="Separate classifier rate in manifold mode; defaults to the encoder rate.")
+    parser.add_argument("--warmup-ratio", type=float, default=0.0,
+                        help="Fraction of optimizer steps used for learning-rate warmup.")
+    parser.add_argument("--warmup-steps", type=int, default=0,
+                        help="Explicit learning-rate warmup steps; use with warmup-ratio=0.")
+    parser.add_argument("--lr-scheduler-type", choices=["linear", "cosine", "constant_with_warmup"],
+                        default="linear", help="Learning-rate schedule after warmup.")
+    parser.add_argument("--gpu-memory-fraction", type=float, default=1.0,
+                        help="Per-process CUDA allocator limit as a fraction of GPU memory.")
     parser.add_argument(
         "--per-device-train-batch-size",
         type=int,

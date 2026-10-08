@@ -104,7 +104,9 @@ class TangentAdamW(torch.optim.AdamW):
     optimizer, not a claim of fully gauge-invariant Riemannian Adam.
     """
 
-    def __init__(self, model, lr=1e-3, weight_decay=0.01, config=None):
+    def __init__(self, model, lr=1e-3, weight_decay=0.01, config=None, classifier_lr=None):
+        if classifier_lr is not None and (not math.isfinite(classifier_lr) or classifier_lr <= 0):
+            raise ValueError("classifier_lr must be finite and positive.")
         self.config = config or ManifoldConfig()
         self.families = [m for m in model.modules() if getattr(m, "is_manifold", False)]
         if not self.families:
@@ -113,11 +115,24 @@ class TangentAdamW(torch.optim.AdamW):
         if any(p.dtype not in (torch.float32, torch.float64) for p in factors):
             raise ValueError("Keep manifold parameters in FP32/FP64; use autocast for mixed precision.")
         factor_ids = {id(p) for p in factors}
-        ordinary = [p for p in model.parameters() if p.requires_grad and id(p) not in factor_ids]
-        super().__init__([
-            {"params": ordinary, "weight_decay": weight_decay},
-            {"params": factors, "weight_decay": 0.0, "lr": lr * self.config.factor_lr_scale},
-        ], lr=lr)
+        ordinary = [(name, p) for name, p in model.named_parameters()
+                    if p.requires_grad and id(p) not in factor_ids]
+        heads = [(name, p) for name, p in ordinary
+                 if name.startswith(("classifier.", "score."))] if classifier_lr is not None else []
+        head_ids = {id(p) for _, p in heads}
+        if classifier_lr is not None and not heads:
+            raise ValueError("A separate classifier rate requires trainable classifier.* or score.* parameters.")
+        # Keep factors at index 1: geometric steps below use this group's scheduled LR.
+        groups = [
+            {"params": [p for _, p in ordinary if id(p) not in head_ids],
+             "weight_decay": weight_decay, "name": "encoder_core"},
+            {"params": factors, "weight_decay": 0.0,
+             "lr": lr * self.config.factor_lr_scale, "name": "encoder_factors"},
+        ]
+        if heads:
+            groups.append({"params": [p for _, p in heads], "weight_decay": weight_decay,
+                           "lr": classifier_lr, "name": "classifier"})
+        super().__init__(groups, lr=lr)
         self.completed_steps = 0
         self.skipped_steps = 0
         self.history = []

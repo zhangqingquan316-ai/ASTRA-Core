@@ -154,6 +154,38 @@ class ManifoldGeometryTest(unittest.TestCase):
         for name, value in get_trainable_state(model).items():
             torch.testing.assert_close(value, before[name])
 
+    def test_encoder_and_classifier_use_separate_adam_steps(self):
+        model, family = make_model()
+        model.add_module("classifier", nn.Sequential(nn.Linear(5, 4), nn.Linear(4, 2)).double())
+        model.register_parameter("frozen", nn.Parameter(torch.ones(1), requires_grad=False))
+        opt = TangentAdamW(model, lr=.02, classifier_lr=.0005, weight_decay=0,
+                          config=ManifoldConfig(policy="core"))
+        grouped = [id(p) for group in opt.param_groups for p in group["params"]]
+        self.assertEqual(len(grouped), len(set(grouped)))
+        self.assertEqual(set(grouped), {id(p) for p in model.parameters() if p.requires_grad})
+        self.assertEqual({id(p) for p in opt.param_groups[2]["params"]},
+                         {id(p) for p in model.classifier.parameters()})
+        before = get_trainable_state(model)
+        for group in (opt.param_groups[0], opt.param_groups[2]):
+            for p in group["params"]:
+                p.grad = torch.ones_like(p)
+        opt.step()
+        for name, p in model.named_parameters():
+            if name.startswith("classifier."):
+                torch.testing.assert_close(before[name] - p, torch.full_like(p, .0005), atol=1e-10, rtol=1e-6)
+        torch.testing.assert_close(before["astra_core_shared_state_q.delta_core"] - family.delta_core,
+                                   torch.full_like(family.delta_core, .02), atol=1e-10, rtol=1e-6)
+        state = copy.deepcopy(opt.state_dict())
+        restored = TangentAdamW(model, lr=.001, classifier_lr=.001)
+        restored.load_state_dict(state)
+        self.assertEqual([g["lr"] for g in restored.param_groups], [.02, .02, .0005])
+
+    def test_invalid_classifier_rate_is_rejected(self):
+        model, _ = make_model()
+        for rate in (0, -.001, float("nan"), float("inf")):
+            with self.subTest(rate=rate), self.assertRaises(ValueError):
+                TangentAdamW(model, classifier_lr=rate)
+
     def test_cpu_autocast_keeps_zero_initial_adapter(self):
         model, family = make_model(dtype=torch.float32)
         base = nn.Linear(5, 4)

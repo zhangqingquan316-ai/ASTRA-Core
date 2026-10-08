@@ -62,6 +62,15 @@ def compute_binary_accuracy(predictions, labels):
     return float((predictions == labels).mean())
 
 
+def compute_binary_f1(predictions, labels):
+    """F1 for positive label 1, including the no-positive-prediction case."""
+    tp = int(((predictions == 1) & (labels == 1)).sum())
+    fp = int(((predictions == 1) & (labels == 0)).sum())
+    fn = int(((predictions == 0) & (labels == 1)).sum())
+    denominator = 2 * tp + fp + fn
+    return float(2 * tp / denominator) if denominator else 0.0
+
+
 def compute_matthews_correlation(predictions, labels):
     predictions = predictions.astype(np.int64)
     labels = labels.astype(np.int64)
@@ -99,7 +108,11 @@ def build_compute_metrics(task_name):
         predictions = np.squeeze(logits) if is_regression else np.argmax(logits, axis=-1)
 
         if metric_name == "accuracy":
-            return {"accuracy": compute_binary_accuracy(predictions, labels)}
+            accuracy = compute_binary_accuracy(predictions, labels)
+            if task_name == "mrpc":
+                f1 = compute_binary_f1(predictions, labels)
+                return {"accuracy": accuracy, "f1": f1, "accuracy_f1": (accuracy + f1) / 2}
+            return {"accuracy": accuracy}
         if metric_name == "matthews":
             return {"matthews": compute_matthews_correlation(predictions, labels)}
         if metric_name == "pearson":

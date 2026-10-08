@@ -38,7 +38,7 @@ from .modeling import (
 )
 from .sweep import get_model_tag, load_sweep_experiments, resolve_target_families
 from .tasks import build_compute_metrics, get_primary_eval_metric_key, get_task_config, validate_local_inputs
-from .training_state import BestModelByMetricCallback, load_trainable_state
+from .training_state import BestModelByMetricCallback, OptimizerScheduleCallback, load_trainable_state
 from .manifold import ManifoldConfig, TangentAdamW
 
 
@@ -82,6 +82,11 @@ def print_training_configuration(args, target_families, experiment_name):
     print(f"  multiplicative_num_bases = {args.multiplicative_num_bases}")
     print(f"  num_train_epochs = {args.num_train_epochs}")
     print(f"  learning_rate = {args.learning_rate}")
+    print(f"  classifier_learning_rate = {getattr(args, 'classifier_learning_rate', None) or args.learning_rate}")
+    print(f"  warmup_ratio = {getattr(args, 'warmup_ratio', 0.0)}")
+    print(f"  warmup_steps = {getattr(args, 'warmup_steps', 0)} (learning-rate warmup)")
+    print(f"  lr_scheduler_type = {getattr(args, 'lr_scheduler_type', 'linear')}")
+    print(f"  gpu_memory_fraction = {getattr(args, 'gpu_memory_fraction', 1.0)}")
     print(f"  per_device_train_batch_size = {args.per_device_train_batch_size}")
     print(f"  per_device_eval_batch_size = {args.per_device_eval_batch_size}")
     print(f"  weight_decay = {args.weight_decay}")
@@ -145,6 +150,17 @@ def prepare_tokenized_datasets(args, tokenizer, task_config, resolved_dataset_pa
 
 def build_training_arguments(args, results_dir):
     """Create Hugging Face TrainingArguments with sensible dtype selection."""
+    warmup_ratio = getattr(args, "warmup_ratio", 0.0)
+    warmup_steps = getattr(args, "warmup_steps", 0)
+    classifier_lr = getattr(args, "classifier_learning_rate", None)
+    if classifier_lr is not None and args.tuning_mode != "manifold":
+        raise ValueError("A separate classifier learning rate currently requires manifold mode.")
+    if not 0.0 <= warmup_ratio <= 1.0:
+        raise ValueError("warmup_ratio must be between 0 and 1.")
+    if type(warmup_steps) is not int or warmup_steps < 0:
+        raise ValueError("warmup_steps must be a nonnegative integer.")
+    if warmup_steps > 0 and warmup_ratio > 0:
+        raise ValueError("Choose either warmup_steps or warmup_ratio, not both.")
     bf16_supported = (
         torch.cuda.is_available()
         and hasattr(torch.cuda, "is_bf16_supported")
@@ -158,6 +174,9 @@ def build_training_arguments(args, results_dir):
         output_dir=str(results_dir),
         overwrite_output_dir=True,
         learning_rate=args.learning_rate,
+        warmup_ratio=warmup_ratio,
+        warmup_steps=warmup_steps,
+        lr_scheduler_type=getattr(args, "lr_scheduler_type", "linear"),
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         num_train_epochs=args.num_train_epochs,
@@ -229,6 +248,11 @@ def run_single_experiment(
 ):
     """Run one fully specified experiment from start to finish."""
     set_seed(args.seed)
+    memory_fraction = getattr(args, "gpu_memory_fraction", 1.0)
+    if not 0.0 < memory_fraction <= 1.0:
+        raise ValueError("gpu_memory_fraction must be greater than 0 and at most 1.")
+    if memory_fraction < 1.0 and torch.cuda.is_available():
+        torch.cuda.set_per_process_memory_fraction(memory_fraction)
     manifold_config = ManifoldConfig.from_args(args) if args.tuning_mode == "manifold" else None
 
     experiment_root, results_dir, final_dir = prepare_experiment_dirs(args, sweep_root=sweep_root)
@@ -331,7 +355,8 @@ def run_single_experiment(
         # Construct after device placement, before Trainer creates its scheduler.
         model.to(training_args.device)
         manifold_optimizer = TangentAdamW(model, lr=args.learning_rate,
-                                         weight_decay=args.weight_decay, config=manifold_config)
+                                         weight_decay=args.weight_decay, config=manifold_config,
+                                         classifier_lr=getattr(args, "classifier_learning_rate", None))
 
     tokenizer_key = "processing_class" if "processing_class" in inspect.signature(Trainer).parameters else "tokenizer"
     trainer = Trainer(
@@ -342,7 +367,7 @@ def run_single_experiment(
         **{tokenizer_key: tokenizer},
         data_collator=data_collator,
         compute_metrics=compute_metrics,
-        callbacks=[best_callback],
+        callbacks=[best_callback, OptimizerScheduleCallback(args)],
         optimizers=(manifold_optimizer, None),
     )
 
@@ -444,6 +469,13 @@ def run_single_experiment(
         "multiplicative_num_bases": args.multiplicative_num_bases,
         "max_length": args.max_length,
         "learning_rate": args.learning_rate,
+        "encoder_learning_rate": args.learning_rate,
+        "classifier_learning_rate": getattr(args, "classifier_learning_rate", None) or args.learning_rate,
+        "warmup_ratio": getattr(args, "warmup_ratio", 0.0),
+        "warmup_steps": getattr(args, "warmup_steps", 0),
+        "lr_scheduler_type": getattr(args, "lr_scheduler_type", "linear"),
+        "optimizer_schedule": getattr(args, "_optimizer_schedule", None),
+        "gpu_memory_fraction": getattr(args, "gpu_memory_fraction", 1.0),
         "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
         "num_train_epochs": args.num_train_epochs,

@@ -26,6 +26,38 @@ def load_trainable_state(model, state_dict):
                 param.copy_(tensor.to(device=param.device, dtype=param.dtype))
 
 
+class OptimizerScheduleCallback(TrainerCallback):
+    """Record the Trainer's actual optimizer-step budget and LR warmup."""
+
+    def __init__(self, experiment_args):
+        self.experiment_args = experiment_args
+
+    def on_train_begin(self, args, state, control, **kwargs):
+        schedule = {
+            "lr_scheduler_type": getattr(args.lr_scheduler_type, "value", args.lr_scheduler_type),
+            "warmup_ratio": args.warmup_ratio,
+            "configured_warmup_steps": args.warmup_steps,
+            "actual_warmup_steps": args.get_warmup_steps(state.max_steps),
+            "total_optimizer_steps": state.max_steps,
+            "peak_learning_rate": args.learning_rate,
+            "encoder_peak_learning_rate": self.experiment_args.learning_rate,
+            "classifier_peak_learning_rate": (getattr(self.experiment_args, "classifier_learning_rate", None)
+                                              or self.experiment_args.learning_rate),
+        }
+        optimizer = kwargs.get("optimizer")
+        if optimizer is not None:
+            schedule["parameter_groups"] = [
+                {"name": group.get("name", str(index)),
+                 "peak_learning_rate": group.get("initial_lr", group["lr"]),
+                 "parameters": sum(p.numel() for p in group["params"]),
+                 "weight_decay": group["weight_decay"]}
+                for index, group in enumerate(optimizer.param_groups)
+            ]
+        self.experiment_args._optimizer_schedule = schedule
+        print(f"Optimizer schedule: {schedule}", flush=True)
+        return control
+
+
 class BestModelByMetricCallback(TrainerCallback):
     """Track the best trainable state according to the main validation metric."""
 

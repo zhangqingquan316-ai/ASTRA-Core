@@ -103,6 +103,13 @@ def save_trainable_checkpoint(
         "multiplicative_num_bases": args.multiplicative_num_bases,
         "max_length": args.max_length,
         "learning_rate": args.learning_rate,
+        "encoder_learning_rate": args.learning_rate,
+        "classifier_learning_rate": getattr(args, "classifier_learning_rate", None) or args.learning_rate,
+        "warmup_ratio": getattr(args, "warmup_ratio", 0.0),
+        "warmup_steps": getattr(args, "warmup_steps", 0),
+        "lr_scheduler_type": getattr(args, "lr_scheduler_type", "linear"),
+        "optimizer_schedule": getattr(args, "_optimizer_schedule", None),
+        "gpu_memory_fraction": getattr(args, "gpu_memory_fraction", 1.0),
         "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
         "num_train_epochs": args.num_train_epochs,
@@ -132,6 +139,8 @@ def extract_history_records(log_history, primary_eval_metric_key):
             }
             if record.get("epoch") is not None:
                 train_row["epoch"] = float(record["epoch"])
+            if "learning_rate" in record:
+                train_row["learning_rate"] = float(record["learning_rate"])
             train_history.append(train_row)
 
         if "eval_loss" in record or primary_eval_metric_key in record:
@@ -142,6 +151,9 @@ def extract_history_records(log_history, primary_eval_metric_key):
                 eval_row["eval_loss"] = float(record["eval_loss"])
             if primary_eval_metric_key in record:
                 eval_row[primary_eval_metric_key] = float(record[primary_eval_metric_key])
+            for key in ("eval_f1", "eval_accuracy_f1"):
+                if key in record:
+                    eval_row[key] = float(record[key])
             eval_history.append(eval_row)
 
     return train_history, eval_history
@@ -171,6 +183,9 @@ def prepend_initial_history(train_history, eval_history, initial_train_metrics, 
         initial_eval_row[get_primary_eval_metric_key(task_name)] = float(
             initial_eval_metrics[initial_eval_metric_key]
         )
+    for metric in ("f1", "accuracy_f1"):
+        if f"eval_init_{metric}" in initial_eval_metrics:
+            initial_eval_row[f"eval_{metric}"] = float(initial_eval_metrics[f"eval_init_{metric}"])
     if len(initial_eval_row) > 1:
         eval_history_with_initial.insert(0, initial_eval_row)
 
@@ -334,6 +349,13 @@ def create_sweep_summary_rows(experiment_results, task_name):
                 "multiplicative_num_bases": config.get("multiplicative_num_bases"),
                 "num_train_epochs": config["num_train_epochs"],
                 "learning_rate": config["learning_rate"],
+                "encoder_learning_rate": config.get("encoder_learning_rate", config["learning_rate"]),
+                "classifier_learning_rate": config.get("classifier_learning_rate", config["learning_rate"]),
+                "warmup_ratio": config.get("warmup_ratio", 0.0),
+                "warmup_steps": config.get("warmup_steps", 0),
+                "lr_scheduler_type": config.get("lr_scheduler_type", "linear"),
+                "actual_warmup_steps": (config.get("optimizer_schedule") or {}).get("actual_warmup_steps"),
+                "total_optimizer_steps": (config.get("optimizer_schedule") or {}).get("total_optimizer_steps"),
                 "train_batch_size": config["per_device_train_batch_size"],
                 "eval_batch_size": config["per_device_eval_batch_size"],
                 "best_epoch": result["best_epoch"],
@@ -349,6 +371,9 @@ def create_sweep_summary_rows(experiment_results, task_name):
                 f"initial_{primary_eval_metric_key}": initial_eval_metrics.get(initial_eval_metric_key),
                 "final_eval_loss": final_metrics.get("eval_loss"),
                 primary_eval_metric_key: final_metrics.get(primary_eval_metric_key),
+                **({"eval_f1": final_metrics["eval_f1"],
+                    "eval_accuracy_f1": final_metrics["eval_accuracy_f1"]}
+                   if "eval_f1" in final_metrics else {}),
                 "experiment_dir": result["experiment_dir"],
             }
         )
