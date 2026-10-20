@@ -109,6 +109,12 @@ def parse_args():
     parser.add_argument("--gpu-memory-fraction", type=float, default=1.0,
                         help="Per-process CUDA allocator limit as a fraction of GPU memory.")
     parser.add_argument(
+        "--weight-layout",
+        choices=["residual", "two_matrix"],
+        default="residual",
+        help="residual stores W0 - alpha*X0 once. two_matrix stores W0 and X0 separately.",
+    )
+    parser.add_argument(
         "--per-device-train-batch-size",
         type=int,
         default=32,

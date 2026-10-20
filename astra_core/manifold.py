@@ -96,6 +96,17 @@ def select_modes(energies, costs, core_energy, config):
     return selected, escape
 
 
+def mode_scores(energies, costs, cost_power):
+    """s_k = e_k / [r_k (n_k - r_k)]^p. Square factors and zero energies score 0."""
+    scores = []
+    for energy, cost in zip(energies, costs):
+        if cost > 0 and energy > 0:
+            scores.append(energy / cost ** cost_power)
+        else:
+            scores.append(0.0)
+    return scores
+
+
 class TangentAdamW(torch.optim.AdamW):
     """AdamW for cores/heads; stateless preconditioned horizontal factor steps.
 
@@ -202,11 +213,27 @@ class TangentAdamW(torch.optim.AdamW):
                 proposals.append((factors[i], candidate))
                 step_norms[str(i)] = min(norm, c.max_factor_step)
             if self._is_probe() or self.completed_steps == 0:
+                scores = mode_scores(energies, costs, c.cost_power)
+                decision_applied = bool(family.probe_factors)
+                core_only = decision_applied and (
+                    escape < c.escape_threshold or not total or not c.max_active_modes)
                 records.append({
                     "step": self.completed_steps, "family": family.family_name,
                     "policy": c.policy, "probe": family.probe_factors,
                     "core_energy": core_energy, "mode_energies": energies,
-                    "escape_ratio": escape, "active_modes": sorted(family.active_modes),
+                    "e0": core_energy, "e_k": list(energies),
+                    "escape_ratio": escape, "rho": escape,
+                    "tau": c.escape_threshold,
+                    "s_k": scores,
+                    "score_order": sorted(
+                        (i for i, score in enumerate(scores) if score > 0),
+                        key=lambda i: (-scores[i], i)),
+                    "gamma": c.capture_fraction,
+                    "max_active_modes": c.max_active_modes,
+                    "cost_power": c.cost_power,
+                    "decision_applied": decision_applied,
+                    "core_only": core_only,
+                    "active_modes": sorted(family.active_modes),
                     "captured_factor_energy_fraction": (
                         sum(energies[i] for i in family.active_modes) / total if total else 0.0),
                     "estimated_missed_tangent_fraction": (

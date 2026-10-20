@@ -315,13 +315,11 @@ class TuckerFamilySharedState(nn.Module):
 
 class TuckerAdaptedLinear(nn.Module):
     """
-    Frozen linear layer reconstructed from:
-    - a Tucker prior obtained from the pretrained model
-    - an optional additive core update
-    - an optional multiplicative mode transform
+    Frozen linear layer reconstructed from a Tucker factorization.
 
-    The `alpha` in this script controls how far we move from the prior Tucker weight
-    toward the tuned Tucker weight.
+    With alpha = 1 the effective weight is W0 + (X - X0) = (W0 - X0) + X.
+    X0 is rebuilt once in float32, subtracted from the pretrained weight, and only
+    that residual is kept. Each forward rebuilds the current Tucker matrix X.
     """
 
     def __init__(
@@ -333,6 +331,7 @@ class TuckerAdaptedLinear(nn.Module):
         matrix_shape,
         reshape_kind,
         alpha,
+        weight_layout="residual",
     ):
         super().__init__()
         self.base_layer = base_layer
@@ -340,6 +339,9 @@ class TuckerAdaptedLinear(nn.Module):
         self.matrix_shape = tuple(matrix_shape)
         self.reshape_kind = reshape_kind
         self.alpha = float(alpha)
+        if weight_layout not in ("residual", "two_matrix"):
+            raise ValueError("weight_layout must be 'residual' or 'two_matrix'.")
+        self.weight_layout = weight_layout
         self.contracted_indices = tuple(int(index) for index in contracted_indices)
 
         self.base_layer.weight.requires_grad = False
@@ -348,11 +350,12 @@ class TuckerAdaptedLinear(nn.Module):
 
         object.__setattr__(self, "shared_state", shared_state)
 
-        # Keep the starting Tucker weight as an immutable anchor. The original
-        # base weight already contains the residual; no extra residual copy.
+        # residual keeps one matrix, R = W0 - alpha * X0.
+        # two_matrix keeps W0 and a frozen copy of X0.
         with torch.no_grad():
-            base_dtype = self.base_layer.weight.dtype
-            base_device = self.base_layer.weight.device
+            weight = self.base_layer.weight
+            base_dtype = weight.dtype
+            base_device = weight.device
             compose_dtype = torch.float64 if base_dtype == torch.float64 else torch.float32
             prior_tensor = self._compose_tensor(
                 self.shared_state.get_base_core(compose_dtype),
@@ -360,11 +363,19 @@ class TuckerAdaptedLinear(nn.Module):
                 apply_mode_transforms=False,
             )
             prior_weight = tensor_to_matrix(prior_tensor, self.matrix_shape, self.reshape_kind)
-
-        self.register_buffer(
-            "prior_tucker_weight",
-            prior_weight.to(device=base_device, dtype=base_dtype).contiguous(),
-        )
+            if self.weight_layout == "residual":
+                residual = weight.detach().to(compose_dtype) - self.alpha * prior_weight
+                if weight.dtype == residual.dtype:
+                    weight.copy_(residual)
+                else:
+                    self.base_layer.weight = nn.Parameter(
+                        residual.to(device=base_device), requires_grad=False
+                    )
+            else:
+                self.register_buffer(
+                    "prior_tucker_weight",
+                    prior_weight.to(device=base_device, dtype=base_dtype).contiguous(),
+                )
 
     def _compose_tensor(self, core_tensor, current_dtype, apply_mode_transforms):
         """
@@ -403,8 +414,8 @@ class TuckerAdaptedLinear(nn.Module):
         - multiplicative mode: keep the base core, but transform each mode
         - both: do both operations before rebuilding the weight matrix
 
-        After reconstruction, only the Tucker part is interpolated with `alpha`;
-        the residual part from the original dense layer is always kept.
+        The stored matrix is W0 - alpha * X0. Adding alpha * X reproduces
+        W0 + alpha * (X - X0). X is still reconstructed to a full matrix.
         """
         current_dtype = x.dtype
 
@@ -438,11 +449,13 @@ class TuckerAdaptedLinear(nn.Module):
             )
 
         adapted_weight = tensor_to_matrix(adapted_tensor, self.matrix_shape, self.reshape_kind)
-        prior_weight = self.prior_tucker_weight.to(current_dtype)
-
-        # alpha=1 means fully trust the tuned Tucker branch.
-        # alpha<1 means interpolate between the pretrained Tucker prior and the tuned Tucker weight.
-        effective_weight = self.base_layer.weight.to(current_dtype) + self.alpha * (adapted_weight - prior_weight)
+        if self.weight_layout == "two_matrix":
+            prior_weight = self.prior_tucker_weight.to(current_dtype)
+            effective_weight = self.base_layer.weight.to(current_dtype) + self.alpha * (
+                adapted_weight - prior_weight
+            )
+        else:
+            effective_weight = self.base_layer.weight.to(current_dtype) + self.alpha * adapted_weight
 
         output = torch.matmul(x, effective_weight.t())
         if self.base_layer.bias is not None:
@@ -763,7 +776,7 @@ def get_or_create_decomposition_cache_entry(
     return cache_entry
 
 
-def patch_model_with_tucker(model, decomposition_results):
+def patch_model_with_tucker(model, decomposition_results, weight_layout="residual"):
     """
     Replace the selected linear layers with PM-style Tucker wrappers.
 
@@ -798,6 +811,7 @@ def patch_model_with_tucker(model, decomposition_results):
             matrix_shape=module_spec["matrix_shape"],
             reshape_kind=module_spec["reshape_kind"],
             alpha=decomposition_results["alpha"],
+            weight_layout=weight_layout,
         )
         setattr(parent_module, module_name, tucker_layer)
 

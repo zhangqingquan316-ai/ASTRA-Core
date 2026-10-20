@@ -190,10 +190,13 @@ class ManifoldGeometryTest(unittest.TestCase):
         model, family = make_model(dtype=torch.float32)
         base = nn.Linear(5, 4)
         x = torch.randn(3, 5)
+        weight = base.weight.detach().clone()
+        bias = base.bias.detach().clone()
         layer = TuckerAdaptedLinear(base, "q", family, (1,), (4, 5), "direct", 1.0)
         with torch.autocast("cpu", dtype=torch.bfloat16):
             # Match the wrapper's separate bias addition rather than fused linear.
-            expected = x @ base.weight.T + base.bias
+            # The wrapper replaces the stored weight with W0 - X0, so compare to the original W0.
+            expected = x @ weight.T + bias
             actual = layer(x)
         torch.testing.assert_close(actual, expected, atol=0, rtol=0)
 

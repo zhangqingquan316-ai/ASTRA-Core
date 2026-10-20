@@ -87,6 +87,7 @@ def print_training_configuration(args, target_families, experiment_name):
     print(f"  warmup_steps = {getattr(args, 'warmup_steps', 0)} (learning-rate warmup)")
     print(f"  lr_scheduler_type = {getattr(args, 'lr_scheduler_type', 'linear')}")
     print(f"  gpu_memory_fraction = {getattr(args, 'gpu_memory_fraction', 1.0)}")
+    print(f"  weight_layout = {getattr(args, 'weight_layout', 'residual')}")
     print(f"  per_device_train_batch_size = {args.per_device_train_batch_size}")
     print(f"  per_device_eval_batch_size = {args.per_device_eval_batch_size}")
     print(f"  weight_decay = {args.weight_decay}")
@@ -325,8 +326,9 @@ def run_single_experiment(
         decomposition_results.append(result)
 
     print("Patching model with Tucker adapters...")
+    weight_layout = getattr(args, "weight_layout", "residual")
     for result in decomposition_results:
-        model = patch_model_with_tucker(model, result)
+        model = patch_model_with_tucker(model, result, weight_layout=weight_layout)
 
     unfreeze_classifier_head(model)
 
@@ -476,6 +478,7 @@ def run_single_experiment(
         "lr_scheduler_type": getattr(args, "lr_scheduler_type", "linear"),
         "optimizer_schedule": getattr(args, "_optimizer_schedule", None),
         "gpu_memory_fraction": getattr(args, "gpu_memory_fraction", 1.0),
+        "weight_layout": getattr(args, "weight_layout", "residual"),
         "per_device_train_batch_size": args.per_device_train_batch_size,
         "per_device_eval_batch_size": args.per_device_eval_batch_size,
         "num_train_epochs": args.num_train_epochs,

@@ -97,4 +97,5 @@ SWEEP_KEY_ALIASES = {
     "target-families": "target_families",
     "target-modules": "target_modules",
     "max-length": "max_length",
+    "weight-layout": "weight_layout",
 }
