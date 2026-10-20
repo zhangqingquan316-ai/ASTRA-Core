@@ -8,6 +8,8 @@ from dataclasses import asdict, dataclass
 import math
 
 import torch
+from .stability import (StableModeSelector, capped_factor_step, incremental_polar,
+                        normalized_tangent_statistics)
 
 
 @dataclass
@@ -23,24 +25,43 @@ class ManifoldConfig:
     factor_lr_scale: float = 1.0
     max_factor_step: float = 0.05
     seed: int = 42
+    numerical_mode: str = "legacy"
+    score_ema: float = 0.9
+    escape_hysteresis: float = 0.03
+    coverage_hysteresis: float = 0.03
+    confirm_probes: int = 3
+    decision_tolerance: float = 1e-3
+    orthogonality_tolerance: float = 1e-5
 
     def __post_init__(self):
-        if self.policy not in {"adaptive", "all", "core", "random"}:
+        if self.policy not in {"stable", "adaptive", "all", "core", "random"}:
             raise ValueError("Unknown manifold policy.")
-        for name in ("probe_interval", "warmup_steps", "max_active_modes", "seed"):
+        if self.numerical_mode not in {"legacy", "stable"}:
+            raise ValueError("Unknown numerical mode.")
+        for name in ("probe_interval", "warmup_steps", "max_active_modes", "seed", "confirm_probes"):
             value = getattr(self, name)
             if not isinstance(value, int) or isinstance(value, bool) or value < 0:
                 raise ValueError(f"{name} must be a nonnegative integer.")
         if self.probe_interval < 1:
             raise ValueError("probe_interval must be positive.")
+        if self.confirm_probes < 1:
+            raise ValueError("confirm_probes must be positive.")
         for name in ("escape_threshold", "capture_fraction", "cost_power", "damping",
-                     "factor_lr_scale", "max_factor_step"):
+                     "factor_lr_scale", "max_factor_step", "score_ema", "escape_hysteresis",
+                     "coverage_hysteresis", "decision_tolerance", "orthogonality_tolerance"):
             if not math.isfinite(getattr(self, name)):
                 raise ValueError(f"{name} must be finite.")
         if not 0 <= self.escape_threshold <= 1 or not 0 < self.capture_fraction <= 1:
             raise ValueError("Invalid escape threshold or capture fraction.")
         if self.cost_power < 0 or min(self.damping, self.factor_lr_scale, self.max_factor_step) <= 0:
             raise ValueError("Damping, factor LR scale and step cap must be positive; cost_power >= 0.")
+        if not 0 <= self.score_ema < 1:
+            raise ValueError("score_ema must be in [0, 1).")
+        if not all(0 <= v < 1 for v in (self.escape_hysteresis, self.coverage_hysteresis,
+                                       self.decision_tolerance)):
+            raise ValueError("Hysteresis and decision tolerance must be in [0, 1).")
+        if self.orthogonality_tolerance <= 0:
+            raise ValueError("orthogonality_tolerance must be positive.")
 
     @classmethod
     def from_args(cls, args):
@@ -147,6 +168,7 @@ class TangentAdamW(torch.optim.AdamW):
         self.completed_steps = 0
         self.skipped_steps = 0
         self.history = []
+        self.selectors = [StableModeSelector(self.config) for _ in self.families]
         self._prepare_forward()
 
     def _is_probe(self):
@@ -183,16 +205,26 @@ class TangentAdamW(torch.optim.AdamW):
         for family_index, family in enumerate(self.families):
             factors = family.manifold_factors()
             core = family.get_updated_core(family.delta_core.dtype).detach()
-            core_energy = float(family.delta_core.grad.double().square().sum()) if family.delta_core.grad is not None else 0.0
+            core_energy = 0.0
             directions, energies = {}, [0.0] * len(factors)
             costs = [p.shape[1] * (p.shape[0] - p.shape[1]) for p in factors]
-            for i, p in enumerate(factors):
-                if p.grad is not None and costs[i] > 0:
-                    directions[i], energies[i] = horizontal_direction(p, p.grad, core, i, c.damping)
+            gradient_scale, diagnostics = None, {}
+            if c.numerical_mode == "stable":
+                directions, energies, core_energy, gradient_scale = normalized_tangent_statistics(
+                    factors, core, family.delta_core.grad, c.damping)
+            else:
+                if family.delta_core.grad is not None:
+                    core_energy = float(family.delta_core.grad.double().square().sum())
+                for i, p in enumerate(factors):
+                    if p.grad is not None and costs[i] > 0:
+                        directions[i], energies[i] = horizontal_direction(p, p.grad, core, i, c.damping)
             total = sum(energies)
             escape = total / (core_energy + total) if core_energy + total else 0.0
             if family.probe_factors:
-                selected, escape = select_modes(energies, costs, core_energy, c)
+                if c.policy == "stable":
+                    selected, escape, diagnostics = self.selectors[family_index].select(energies, costs, core_energy)
+                else:
+                    selected, escape = select_modes(energies, costs, core_energy, c)
                 if c.policy == "random":
                     # Same probe-dependent cardinality as adaptive: isolates routing quality.
                     eligible = [i for i, cost in enumerate(costs) if cost > 0]
@@ -201,25 +233,35 @@ class TangentAdamW(torch.optim.AdamW):
                     selected = [eligible[i] for i in order[:len(selected)]]
                 family.active_modes = set(selected)
 
-            step_norms = {}
+            step_norms, actual_step_norms = {}, {}
             for i in sorted(family.active_modes):
                 if i not in directions:
                     continue
-                step = -self.param_groups[1]["lr"] * directions[i]
+                step = (capped_factor_step(directions[i], self.param_groups[1]["lr"], c.max_factor_step)
+                        if c.numerical_mode == "stable" else
+                        -self.param_groups[1]["lr"] * directions[i])
                 norm = float(torch.linalg.vector_norm(step))
                 if norm > c.max_factor_step:
                     step.mul_(c.max_factor_step / norm)
-                candidate = polar_retraction(factors[i].to(step.dtype), step)
+                candidate = (incremental_polar(factors[i], step, c.orthogonality_tolerance)
+                             if c.numerical_mode == "stable" else
+                             polar_retraction(factors[i].to(step.dtype), step))
+                if not torch.isfinite(candidate).all():
+                    raise FloatingPointError("Nonfinite factor proposal; no optimizer update applied.")
                 proposals.append((factors[i], candidate))
                 step_norms[str(i)] = min(norm, c.max_factor_step)
+                actual_step_norms[str(i)] = float(torch.linalg.vector_norm(
+                    candidate.double() - factors[i].double()))
             if self._is_probe() or self.completed_steps == 0:
                 scores = mode_scores(energies, costs, c.cost_power)
                 decision_applied = bool(family.probe_factors)
-                core_only = decision_applied and (
-                    escape < c.escape_threshold or not total or not c.max_active_modes)
+                core_only = decision_applied and not family.active_modes
                 records.append({
                     "step": self.completed_steps, "family": family.family_name,
                     "policy": c.policy, "probe": family.probe_factors,
+                    "numerical_mode": c.numerical_mode,
+                    "gradient_scale": gradient_scale,
+                    "energy_units": "gradient_scale_squared" if gradient_scale is not None else "raw",
                     "core_energy": core_energy, "mode_energies": energies,
                     "e0": core_energy, "e_k": list(energies),
                     "escape_ratio": escape, "rho": escape,
@@ -240,9 +282,11 @@ class TangentAdamW(torch.optim.AdamW):
                         sum(e for i, e in enumerate(energies) if i not in family.active_modes)
                         / (core_energy + total) if core_energy + total else 0.0),
                     "horizontal_costs": costs, "factor_step_norms": step_norms,
+                    "actual_factor_step_norms": actual_step_norms,
                     "active_factor_params": sum(factors[i].numel() for i in family.active_modes),
                     "orthogonality_error": max(float(torch.linalg.matrix_norm(
                         p.T @ p - torch.eye(p.shape[1], device=p.device, dtype=p.dtype))) for p in factors),
+                    **diagnostics,
                 })
 
         # Suppress AdamW for factors (including its momentum and decoupled decay).
@@ -268,6 +312,7 @@ class TangentAdamW(torch.optim.AdamW):
             "skipped_steps": self.skipped_steps, "history": self.history,
             "active_modes": [sorted(f.active_modes) for f in self.families],
             "family_names": [f.family_name for f in self.families],
+            "selectors": [s.state_dict() for s in self.selectors],
         }
         return result
 
@@ -281,6 +326,13 @@ class TangentAdamW(torch.optim.AdamW):
         self.completed_steps = controller["completed_steps"]
         self.skipped_steps = controller["skipped_steps"]
         self.history = list(controller["history"])
+        self.selectors = [StableModeSelector(self.config) for _ in self.families]
+        states = controller.get("selectors")
+        if states is not None:
+            if len(states) != len(self.selectors):
+                raise ValueError("Selector checkpoint family count does not match.")
+            for selector, state in zip(self.selectors, states):
+                selector.load_state_dict(state)
         for family, modes in zip(self.families, controller["active_modes"]):
             family.active_modes = set(modes)
         self._prepare_forward()

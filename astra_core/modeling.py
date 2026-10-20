@@ -271,6 +271,24 @@ class TuckerFamilySharedState(nn.Module):
             return factor.detach()
         return factor
 
+    def enable_delta_anchor(self):
+        """Store only the compact, frozen initial factors, once per family."""
+        if hasattr(self, "anchor_factor_0"):
+            return
+        for i, factor in enumerate(self.manifold_factors()):
+            self.register_buffer(f"anchor_factor_{i}", factor.detach().clone())
+
+    def get_delta_core(self, dtype):
+        """Transform the core increment without subtracting two large cores."""
+        base = self.base_core.to(dtype)
+        delta = self.delta_core.to(dtype) if self.has_additive else torch.zeros_like(base)
+        for mode, adapter in enumerate(self.mode_transform_adapters):
+            increment = (adapter.coefficients.to(dtype).view(-1, 1, 1)
+                         * adapter.basis_matrices.to(dtype)).sum(0)
+            delta = (tl.tenalg.mode_dot(delta, adapter.identity.to(dtype) + increment, mode)
+                     + tl.tenalg.mode_dot(base, increment, mode))
+        return delta
+
     def get_updated_core(self, dtype):
         """Return the additive-updated core for additive/both tuning modes."""
         base_core = self.base_core.to(dtype)
@@ -315,11 +333,10 @@ class TuckerFamilySharedState(nn.Module):
 
 class TuckerAdaptedLinear(nn.Module):
     """
-    Frozen linear layer reconstructed from a Tucker factorization.
+    Frozen linear layer plus a shared Tucker update.
 
-    With alpha = 1 the effective weight is W0 + (X - X0) = (W0 - X0) + X.
-    X0 is rebuilt once in float32, subtracted from the pretrained weight, and only
-    that residual is kept. Each forward rebuilds the current Tucker matrix X.
+    delta propagates increments without dense anchor subtraction. residual,
+    two_matrix and cpu_anchor retain the corresponding legacy arithmetic.
     """
 
     def __init__(
@@ -339,8 +356,8 @@ class TuckerAdaptedLinear(nn.Module):
         self.matrix_shape = tuple(matrix_shape)
         self.reshape_kind = reshape_kind
         self.alpha = float(alpha)
-        if weight_layout not in ("residual", "two_matrix"):
-            raise ValueError("weight_layout must be 'residual' or 'two_matrix'.")
+        if weight_layout not in ("residual", "two_matrix", "delta", "cpu_anchor"):
+            raise ValueError("Unknown Tucker weight layout.")
         self.weight_layout = weight_layout
         self.contracted_indices = tuple(int(index) for index in contracted_indices)
 
@@ -349,6 +366,10 @@ class TuckerAdaptedLinear(nn.Module):
             self.base_layer.bias.requires_grad = False
 
         object.__setattr__(self, "shared_state", shared_state)
+
+        if weight_layout == "delta":
+            shared_state.enable_delta_anchor()
+            return
 
         # residual keeps one matrix, R = W0 - alpha * X0.
         # two_matrix keeps W0 and a frozen copy of X0.
@@ -371,11 +392,40 @@ class TuckerAdaptedLinear(nn.Module):
                     self.base_layer.weight = nn.Parameter(
                         residual.to(device=base_device), requires_grad=False
                     )
+            elif self.weight_layout == "cpu_anchor":
+                # Deliberately not a buffer: model.to(cuda) must leave this on
+                # the host. Inference artifacts reconstruct it from the basis.
+                anchor = prior_weight.to(device="cpu", dtype=base_dtype).contiguous()
+                self.cpu_anchor = anchor.pin_memory() if torch.cuda.is_available() else anchor
             else:
                 self.register_buffer(
                     "prior_tucker_weight",
                     prior_weight.to(device=base_device, dtype=base_dtype).contiguous(),
                 )
+
+    def _compose_delta_tensor(self, dtype):
+        """Propagate (base, increment) pairs through the multilinear product.
+
+        (U0+dU)(B+D)-U0 B = U D + dU B. This avoids a dense
+        X-X0 subtraction and preserves tiny additive-core updates.
+        """
+        family = self.shared_state
+        base, delta = family.base_core.to(dtype), family.get_delta_core(dtype)
+        factors = family.manifold_factors()
+        for mode, row in enumerate(self.contracted_indices):
+            u = family._factor_for_forward(factors[mode], mode).to(dtype)[row]
+            u0 = getattr(family, f"anchor_factor_{mode}").to(dtype)[row]
+            delta = (torch.tensordot(u, delta, dims=([0], [0]))
+                     + torch.tensordot(u - u0, base, dims=([0], [0])))
+            base = torch.tensordot(u0, base, dims=([0], [0]))
+        for k in range(family.num_remaining_modes):
+            mode = family.num_contracted_modes + k
+            u = family._factor_for_forward(factors[mode], mode).to(dtype)
+            u0 = getattr(family, f"anchor_factor_{mode}").to(dtype)
+            delta = tl.tenalg.mode_dot(delta, u, k) + tl.tenalg.mode_dot(base, u - u0, k)
+            if k + 1 < family.num_remaining_modes:
+                base = tl.tenalg.mode_dot(base, u0, k)
+        return delta
 
     def _compose_tensor(self, core_tensor, current_dtype, apply_mode_transforms):
         """
@@ -418,6 +468,13 @@ class TuckerAdaptedLinear(nn.Module):
         W0 + alpha * (X - X0). X is still reconstructed to a full matrix.
         """
         current_dtype = x.dtype
+        if self.weight_layout == "delta":
+            with torch.autocast(device_type=x.device.type, enabled=False):
+                dtype = torch.float64 if self.shared_state.base_core.dtype == torch.float64 else torch.float32
+                delta = tensor_to_matrix(self._compose_delta_tensor(dtype), self.matrix_shape, self.reshape_kind)
+            base_output = self.base_layer(x)
+            delta_output = torch.nn.functional.linear(x, delta.to(x.dtype))
+            return base_output + self.alpha * delta_output.to(base_output.dtype)
 
         if self.shared_state.tuning_mode == "manifold":
             # Match the anchor's FP32 reconstruction under mixed precision.
@@ -449,8 +506,9 @@ class TuckerAdaptedLinear(nn.Module):
             )
 
         adapted_weight = tensor_to_matrix(adapted_tensor, self.matrix_shape, self.reshape_kind)
-        if self.weight_layout == "two_matrix":
-            prior_weight = self.prior_tucker_weight.to(current_dtype)
+        if self.weight_layout in ("two_matrix", "cpu_anchor"):
+            anchor = self.cpu_anchor if self.weight_layout == "cpu_anchor" else self.prior_tucker_weight
+            prior_weight = anchor.to(device=x.device, dtype=current_dtype, non_blocking=True)
             effective_weight = self.base_layer.weight.to(current_dtype) + self.alpha * (
                 adapted_weight - prior_weight
             )

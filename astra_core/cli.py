@@ -76,7 +76,14 @@ def parse_args():
         default="manifold",
         help="ASTRA-Tangent (manifold, default), or legacy additive/multiplicative/both baselines.",
     )
-    parser.add_argument("--manifold-policy", choices=["adaptive", "all", "core", "random"], default="adaptive")
+    parser.add_argument("--manifold-policy", choices=["stable", "adaptive", "all", "core", "random"], default="stable")
+    parser.add_argument("--manifold-numerical-mode", choices=["stable", "legacy"], default="stable")
+    parser.add_argument("--manifold-score-ema", type=float, default=0.9)
+    parser.add_argument("--manifold-escape-hysteresis", type=float, default=0.03)
+    parser.add_argument("--manifold-coverage-hysteresis", type=float, default=0.03)
+    parser.add_argument("--manifold-confirm-probes", type=int, default=3)
+    parser.add_argument("--manifold-decision-tolerance", type=float, default=1e-3)
+    parser.add_argument("--manifold-orthogonality-tolerance", type=float, default=1e-5)
     parser.add_argument("--manifold-probe-interval", type=int, default=10)
     parser.add_argument("--manifold-warmup-steps", type=int, default=20)
     parser.add_argument("--manifold-max-active-modes", type=int, default=2)
@@ -110,9 +117,9 @@ def parse_args():
                         help="Per-process CUDA allocator limit as a fraction of GPU memory.")
     parser.add_argument(
         "--weight-layout",
-        choices=["residual", "two_matrix"],
-        default="residual",
-        help="residual stores W0 - alpha*X0 once. two_matrix stores W0 and X0 separately.",
+        choices=["delta", "cpu_anchor", "residual", "two_matrix"],
+        default="delta",
+        help="delta reconstructs increments directly; cpu_anchor preserves old arithmetic with host anchors.",
     )
     parser.add_argument(
         "--per-device-train-batch-size",

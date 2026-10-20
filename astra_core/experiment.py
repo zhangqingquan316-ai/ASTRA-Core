@@ -234,6 +234,8 @@ def compute_parameter_statistics(model):
                                       if getattr(m, "is_manifold", False)
                                       for p in m.manifold_factors()),
         "registered_buffer_bytes": sum(b.numel() * b.element_size() for b in model.buffers()),
+        "host_anchor_bytes": sum(m.cpu_anchor.numel() * m.cpu_anchor.element_size()
+                                 for m in model.modules() if hasattr(m, "cpu_anchor")),
         "manifold_horizontal_dof": sum(p.shape[1] * (p.shape[0] - p.shape[1])
                                        for m in model.modules() if getattr(m, "is_manifold", False)
                                        for p in m.manifold_factors()),

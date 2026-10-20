@@ -286,7 +286,7 @@ class TrainerIntegrationTest(unittest.TestCase):
             torch.save(get_trainable_state(model), Path(output) / "trainable_state.pt")
             fresh = BertForSequenceClassification(model.config)
             fresh.load_state_dict(base_state)
-            load_adapter_checkpoint(fresh, output)
+            load_adapter_checkpoint(fresh, output, weight_layout="residual")
             fresh.eval()
             model.eval()
             with torch.no_grad():

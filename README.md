@@ -6,6 +6,10 @@ ASTRA-Core **v0.2** adds **ASTRA-Tangent**, a research framework that decides wh
 
 Authors: Zhang Qingquan, Jiang Yurui. License: [BSD 3-Clause](LICENSE).
 
+The `jyr` branch adds direct Tucker increments, stable small-step geometry, and
+a stateful coverage selector. CLI defaults and checkpoint layout handling are
+documented in [the numerical stability note](docs/STABILITY_zh.md).
+
 中文研究说明、文献对照、数学推导及投稿实验计划：**[RESEARCH_zh.md](docs/RESEARCH_zh.md)**。代码导读见 [CODE_MAP_zh.md](docs/CODE_MAP_zh.md)。
 
 ## Method
@@ -51,7 +55,8 @@ python -m astra_core \
   --dataset-path ./local_datasets/glue_sst2 \
   --glue-task sst2 --target-families q k v o \
   --attn-ranks 4 4 16 32 \
-  --tuning-mode manifold --manifold-policy adaptive \
+  --tuning-mode manifold --weight-layout delta \
+  --manifold-policy stable --manifold-numerical-mode stable \
   --manifold-probe-interval 10 --manifold-warmup-steps 20 \
   --manifold-max-active-modes 2 --manifold-escape-threshold 0.15 \
   --learning-rate 1e-3 --num-train-epochs 3 \
@@ -66,7 +71,8 @@ The default tuning mode is now `manifold`. Select `--tuning-mode additive`, `mul
 
 | Manifold policy | Behavior after core warmup |
 |---|---|
-| `adaptive` | Periodic gradient probes select up to the mode budget |
+| `stable` | Smoothed energy shares, exact coverage subsets, hysteresis and confirmed switches (CLI default) |
+| `adaptive` | Legacy density-greedy probes select up to the mode budget |
 | `all` | Every nonsquare factor is updated |
 | `core` | Factors remain fixed; same core optimizer as adaptive |
 | `random` | Random modes with adaptive's selection count at the current state |

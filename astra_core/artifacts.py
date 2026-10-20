@@ -100,6 +100,7 @@ def save_trainable_checkpoint(
         "attn_alpha": args.attn_alpha,
         "ffn_alpha": args.ffn_alpha,
         "tuning_mode": args.tuning_mode,
+        "weight_layout": getattr(args, "weight_layout", "residual"),
         "multiplicative_num_bases": args.multiplicative_num_bases,
         "max_length": args.max_length,
         "learning_rate": args.learning_rate,

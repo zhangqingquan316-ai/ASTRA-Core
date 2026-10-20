@@ -1,6 +1,7 @@
 """Exercise STS-B's float labels and one-output regression with split rates."""
 
 from pathlib import Path
+from dataclasses import replace
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -51,7 +52,8 @@ class RemainingGlueTest(unittest.TestCase):
             training = build_training_arguments(args, Path(output))
             training.max_steps = 4
             training.disable_tqdm = True
-            training.use_cpu = True
+            # TrainingArguments caches device setup during initialization.
+            training = replace(training, use_cpu=True, bf16=False, fp16=False)
             trainer = Trainer(model=model, args=training, train_dataset=data, eval_dataset=data,
                               compute_metrics=metrics, optimizers=(optimizer, None),
                               callbacks=[OptimizerScheduleCallback(args)])
