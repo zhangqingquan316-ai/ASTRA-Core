@@ -295,6 +295,30 @@ class StableSelectionTests(unittest.TestCase):
         self.assertEqual(opt.history, o2.history)
         self.assertEqual(opt.selectors[0].state_dict(), o2.selectors[0].state_dict())
 
+    def test_default_smoothing_rejects_spike_but_tracks_persistent_change(self):
+        selector = StableModeSelector(self.config(max_active_modes=1, escape_threshold=0))
+        for _ in range(50):
+            selector.select([1., 0.], [1, 1], 0.)
+        self.assertEqual(selector.select([0., 1.], [1, 1], 0.)[0], [0])
+        for _ in range(5):
+            self.assertEqual(selector.select([1., 0.], [1, 1], 0.)[0], [0])
+        changed_at = None
+        for probe in range(30):
+            modes, _, _ = selector.select([0., 1.], [1, 1], 0.)
+            if modes == [1] and changed_at is None:
+                changed_at = probe + 1
+        self.assertIsNotNone(changed_at)
+        self.assertGreater(changed_at, 3)
+        self.assertLessEqual(changed_at, 20)
+        self.assertEqual(modes, [1])
+
+    def test_escape_schmitt_gate_has_separate_open_and_close_thresholds(self):
+        selector = StableModeSelector(self.config(score_ema=0., confirm_probes=1))
+        for rho, expected in ((.17, False), (.19, True), (.14, True), (.11, False)):
+            modes, _, diagnostics = selector.select([rho], [1], 1-rho)
+            self.assertEqual(diagnostics["gate_open"], expected)
+            self.assertEqual(bool(modes), expected)
+
     def test_invalid_configuration_and_energy_rejected(self):
         for kw in ({"score_ema": 1}, {"confirm_probes": 0}, {"decision_tolerance": -1},
                    {"coverage_hysteresis": float("nan")}, {"orthogonality_tolerance": 0}):

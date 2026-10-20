@@ -2,7 +2,11 @@
 
 ASTRA-Core **v0.2** adds **ASTRA-Tangent**, a research framework that decides when to update only a shared Tucker core and when to move selected mode subspaces on orthogonality-constrained manifolds.
 
-**Status:** implemented and tested on synthetic tensors and a tiny offline BERT workflow. Real-task accuracy, GPU efficiency, and publication-level novelty remain to be established. The original ASTRA-Core / Mode / Hybrid implementations remain available as baselines.
+**Status:** tested on synthetic tensors, a tiny offline BERT workflow, and matched
+RoBERTa-large/CoLA stability trials. The [validation report](docs/STABILITY_RESULTS_20261021_zh.md)
+includes three-seed early-training results and limitations. Full-budget,
+cross-task accuracy, GPU efficiency, and publication-level novelty remain to be
+established. The original ASTRA-Core / Mode / Hybrid implementations remain available as baselines.
 
 Authors: Zhang Qingquan, Jiang Yurui. License: [BSD 3-Clause](LICENSE).
 
